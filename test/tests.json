@@ -156,7 +156,8 @@
                 {"name": "Sleeping Barber (Variation 1)", "filename": "examples/savina/barber.pat", "exit_code": 0},
                 {"name": "Sleeping Barber (Variation 2)", "filename": "examples/savina/barber2.pat", "exit_code": 0},
                 {"name": "Sleeping Barber (Variation 3)", "filename": "examples/savina/barber3.pat", "exit_code": 0},
-                {"name": "Thread Ring", "filename": "examples/savina/thread_ring.pat", "exit_code": 0}
+                {"name": "Thread Ring", "filename": "examples/savina/thread_ring.pat", "exit_code": 0},
+                {"name": "Chameneos", "filename": "examples/savina/chameneos.pat", "exit_code": 0}
             ]
         },
         { "group": "Correct examples (Savina with lists)",

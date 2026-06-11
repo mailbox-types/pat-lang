@@ -430,6 +430,8 @@ and synthesise_comp :
                For the purposes of the spawning thread, we treat all inferred
                usages as Usable. *)
             Type.unit_type, Ty_env.make_usable env, constrs
+        | Drop _ | Dup _ ->
+            raise (Errors.internal_error "gen_constraints.ml" "Drop and Dup should only be inserted after typechecking")
         | _ -> Gripers.cannot_synthesise e [pos]
 
 (* Check --> Synth switch. Ensures synthesised type is subtype of checked type. *)
@@ -758,6 +760,8 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                      pat_constrs]
             in
             (env, constrs)
+        | Drop _ | Dup _ ->
+            raise (Errors.internal_error "gen_constraints.ml" "Drop and Dup should only be inserted after typechecking")
         | _ ->
             (* If we don't have a checking rule, it might be possible to
                synthesise and then check the result. *)

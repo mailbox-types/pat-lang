@@ -385,6 +385,8 @@ and synthesise_comp ienv env comp =
                         g :: gs, g_ty
             in
             WithPos.make ~pos(Guard { target; pattern; guards; iname = Some iname }), g_ty
+        | Drop _ | Dup _ ->
+            raise (Errors.internal_error "pretypecheck.ml" "Drop and Dup should only be inserted after typechecking")
 and check_comp ienv env comp ty  =
     let pos = WithPos.pos comp in
     match WithPos.node comp with

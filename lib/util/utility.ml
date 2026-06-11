@@ -10,6 +10,52 @@ module type STRINGSET = (Set.S with type elt = string)
 module StringSet = Set.Make(String)
 type stringset = StringSet.t
 
+module Multiset = struct
+    module Make (Ord : Map.OrderedType) = struct
+        module Map = Map.Make(Ord)
+
+        type elt = Ord.t
+        type t = int Map.t
+
+        let empty = Map.empty
+
+        let singleton x = Map.singleton x 1
+
+        let multiplicity x xs =
+            Map.find_opt x xs
+            |> Option.value ~default:0
+
+        let add ?(count=1) x xs =
+            if count <= 0 then
+                xs
+            else
+                Map.update x
+                    (function
+                        | None -> Some count
+                        | Some n -> Some (n + count))
+                    xs
+
+        let of_list xs =
+            List.fold_left (fun acc x -> add x acc) empty xs
+
+        let combine xs ys =
+            Map.merge
+                (fun _ left right ->
+                    match left, right with
+                        | None, None -> None
+                        | Some n, None | None, Some n -> Some n
+                        | Some n1, Some n2 -> Some (n1 + n2))
+                xs ys
+
+        let combine_many xss =
+            List.fold_left combine empty xss
+
+        let bindings = Map.bindings
+    end
+end
+
+
+
 (* Pipelining and composition *)
 
 (* Options *)

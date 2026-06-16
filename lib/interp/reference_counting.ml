@@ -9,41 +9,258 @@ let rec insert_reference_counting borrowed owned comp =
     let pos = WithPos.pos comp in
     let wrap = WithPos.make ~pos in
     let irc = insert_reference_counting in
-    let ircv = insert_reference_counting_val in
+    let ircv borrowed owned v = 
+        let (dups, v') = insert_reference_counting_val borrowed owned v in
+        (VarMultiset.bindings dups, v')
+    in
     let ircg = insert_reference_counting_guard in
     match WithPos.node comp with
-        | Annotate (c, ty) ->
+        | Annotate (c, ty) -> (* OK *)
             wrap (Annotate (irc borrowed owned c, ty))
-        | Let { binder; term; cont } ->
+        | Let { binder; term; cont } -> (* TODO *)
             wrap (Let { binder; term = irc borrowed owned term; cont = irc borrowed owned cont })
-        | Seq (e1, e2) ->
-            wrap (Seq (irc borrowed owned e1, irc borrowed owned e2))
-        | Return v ->
-            wrap (Return (ircv borrowed owned v))
-        | App { func; args } ->
-            wrap (App { func = ircv borrowed owned func; args = List.map (ircv borrowed owned) args })
+        | Seq (e1, e2) -> (* DONE *)
+            (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
+            let e2_owned = VarSet.inter owned (Ir.free_variables e2) in
+            (* e1_borrowed: borrowed env for typing e1. union of borrowed variables and e2_owned *)
+            let e1_borrowed = VarSet.union borrowed e2_owned in
+            (* e1_owned: everything in owned environment that's not in e2_owned. *)
+            let e1_owned = VarSet.diff owned e2_owned in
+            (* e2_borrowed is just the current borrowed refs. *)
+            let e2_borrowed = borrowed in
+            let e1' = irc e1_borrowed e1_owned e1 in
+            let e2' = irc e2_borrowed e2_owned e2 in
+            wrap (Seq (e1', e2'))
+        | Return v -> (* DONE *)
+            let (dups, v') = ircv borrowed owned v in
+            wrap (Seq (WithPos.make (Dup dups), wrap <| Return v'))
+        | App { func; args } -> (* TODO Val Seq *)
+            begin
+                match transform_val_sequence borrowed owned (func :: args) with
+                    | (dups, func' :: args') ->
+                        let dups_list = VarMultiset.bindings dups in
+                        wrap (Seq (WithPos.make (Dup dups_list),
+                        wrap <| App { func = func'; args = args' }))
+                    (* impossible; transform_val_sequence always gives the same number of values back *)
+                    | _ -> assert false
+            end
+        (* When doing branching control flow: when processing each subexpression, owned environment is the
+              intersection of the current owned environment and the free variables of the subexpression.
+              Then in the body, drop everything that is in the owned environment but not the current environment.
+              Borrowed environment is just the current borrowed environment. *)
+        (* The 'match' schema in the Perceus paper rather unhelpfully has a variable literal as the scrutinee.
+           However this isn't too big a deal -- drops will ensure same FVs in each branch. Then we can just
+            say that the borrowed environment for the test is the union of the borrowed env and the owned env of the branches. *)
         | If { test; then_expr; else_expr } ->
-            wrap (If { test = ircv borrowed owned test; then_expr = irc borrowed owned then_expr; else_expr = irc borrowed owned else_expr })
-        | LetTuple { binders; tuple; cont } ->
-            wrap (LetTuple { binders; tuple = ircv borrowed owned tuple; cont = irc borrowed owned cont })
+            let then_owned = VarSet.inter owned (Ir.free_variables then_expr) in
+            let else_owned = VarSet.inter owned (Ir.free_variables else_expr) in
+            let branches_owned = VarSet.inter owned
+                (VarSet.union
+                    (Ir.free_variables then_expr)
+                    (Ir.free_variables else_expr)) in
+            let mk_drop vars =
+                let var_list =
+                    VarSet.diff branches_owned vars
+                    |> VarSet.elements
+                    |> List.map (fun v -> (v, 1))
+                in
+                WithPos.make (Drop var_list)
+            in
+            let then_drop = mk_drop (VarSet.diff branches_owned then_owned) in
+            let else_drop = mk_drop (VarSet.diff branches_owned else_owned) in
+            let test_borrowed = VarSet.union borrowed branches_owned in
+            let test_owned = VarSet.diff owned branches_owned in
+            let (dups, translated_test) = ircv test_owned test_borrowed test in
+            let translated_then = irc then_owned borrowed then_expr in
+            let translated_else = irc then_owned borrowed else_expr in
+            let final_then_expr =
+                WithPos.make ~pos:(WithPos.pos then_expr) (Seq (then_drop, translated_then))
+            in
+            let final_else_expr =
+                WithPos.make ~pos:(WithPos.pos else_expr) (Seq (else_drop, translated_else))
+            in
+            let translated_if = 
+                wrap (If { 
+                    test = translated_test; then_expr = final_then_expr; else_expr = final_else_expr })
+            in
+            WithPos.make ~pos (Seq (WithPos.make (Dup dups), translated_if))
+        | LetTuple { binders; tuple; cont } -> (* TODO: Val then Expr *)
+            let cont_fvs = Ir.free_variables cont in
+            let binders_set = 
+                binders
+                    |> List.map (Var.of_binder << fst)
+                    |> VarSet.of_list
+            in
+            let cont_owned = VarSet.(
+                inter owned
+                    (diff cont_fvs binders_set)
+            )
+            in
+            (* cont_drop: everything in binders that isn't used in cont *)
+            let cont_drop = VarSet.diff binders_set cont_fvs in
+            let tuple_borrowed = VarSet.union borrowed cont_owned in
+            let tuple_owned = VarSet.diff owned tuple_borrowed in
+            let (dups, translated_tuple) = ircv tuple_borrowed tuple_owned tuple in
+            let translated_cont =  irc borrowed cont_owned cont in
+            let final_translated_cont = 
+                if VarSet.is_empty cont_drop then
+                    translated_cont
+                else
+                    (* Drop binders if variables unused *)
+                    wrap (Seq 
+                        (WithPos.make (Drop (VarSet.to_list cont_drop |> List.map (fun v -> (v, 1)))),
+                        translated_cont))
+                in
+            let translated_let_tuple =
+                wrap (LetTuple { binders; tuple = translated_tuple; cont = final_translated_cont })
+            in
+            wrap (Seq
+                (WithPos.make (Dup (dups)), translated_let_tuple))
         | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
-            wrap (Case { term = ircv borrowed owned term; branch1 = ((bnd1, ty1), irc borrowed owned e1); branch2 = ((bnd2, ty2), irc borrowed owned e2) })
+            let bnd1_var = Var.of_binder bnd1 in
+            let bnd2_var = Var.of_binder bnd2 in
+            let e1_fvs = VarSet.remove bnd1_var (Ir.free_variables e1) in
+            let e2_fvs = VarSet.remove bnd2_var (Ir.free_variables e2) in
+            let e1_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd1_var)) e1_fvs in
+            let e2_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd2_var)) e2_fvs in
+            (* branches_owned: all owned variables occurring in either branch *)
+            let branches_owned = VarSet.inter owned (VarSet.union e1_fvs e2_fvs) in
+            let mk_drop vars =
+                let var_list =
+                    VarSet.elements vars
+                    |> List.map (fun v -> (v, 1))
+                in
+                WithPos.make (Drop var_list)
+            in
+            (* ei_drop: variables owned by branches (+binder), but not used. 
+               ensures variables are dropped if they're not used in that branch. *)
+            let e1_drop = mk_drop (
+                VarSet.diff 
+                    (VarSet.union branches_owned (VarSet.singleton (Var.of_binder bnd1)))
+                    e1_owned
+            )
+            in
+            let e2_drop = mk_drop (
+                VarSet.diff 
+                    (VarSet.union branches_owned (VarSet.singleton (Var.of_binder bnd2)))
+                    e2_owned
+            )
+            in
+            (* borrowed variables for the term: borrowed variables + variables used in branches *)
+            let term_borrowed = VarSet.union borrowed branches_owned in
+            let term_owned = VarSet.diff owned branches_owned in
+            let (dups, translated_term) = ircv term_borrowed term_owned term in
+            let translated_e1 = irc borrowed e1_owned e1 in
+            let translated_e2 = irc borrowed e2_owned e2 in
+            let final_e1 =
+                WithPos.make ~pos:(WithPos.pos e1) (Seq (e1_drop, translated_e1))
+            in
+            let final_e2 =
+                WithPos.make ~pos:(WithPos.pos e2) (Seq (e2_drop, translated_e2))
+            in
+            let translated_case =
+                wrap (Case {
+                    term = translated_term;
+                    branch1 = ((bnd1, ty1), final_e1);
+                    branch2 = ((bnd2, ty2), final_e2)
+                })
+            in
+            WithPos.make ~pos (Seq (WithPos.make (Dup dups), translated_case))
         | CaseL { term; ty; nil; cons = ((bnd1, bnd2), e) } ->
-            wrap (CaseL { term = ircv borrowed owned term; ty; nil = irc borrowed owned nil; cons = ((bnd1, bnd2), irc borrowed owned e) })
-        | New interface ->
+            let bnd1_var = Var.of_binder bnd1 in
+            let bnd2_var = Var.of_binder bnd2 in
+            let nil_fvs = Ir.free_variables nil in
+            let cons_fvs = Ir.free_variables e |> VarSet.remove bnd1_var |> VarSet.remove bnd2_var in
+            let nil_owned = VarSet.inter owned nil_fvs in
+            let cons_owned =
+                VarSet.inter
+                    (VarSet.union owned (VarSet.of_list [bnd1_var; bnd2_var]))
+                    cons_fvs
+            in
+            (* branches_owned: all owned variables occurring in either branch *)
+            let branches_owned = VarSet.inter owned (VarSet.union nil_fvs cons_fvs) in
+            let mk_drop vars =
+                let var_list =
+                    VarSet.elements vars
+                    |> List.map (fun v -> (v, 1))
+                in
+                WithPos.make (Drop var_list)
+            in
+            let nil_drop = mk_drop (VarSet.diff branches_owned nil_owned) in
+            let cons_drop = mk_drop (
+                VarSet.diff
+                    (VarSet.union branches_owned (VarSet.of_list [bnd1_var; bnd2_var]))
+                    cons_owned
+            )
+            in
+            (* borrowed variables for the term: borrowed variables + variables used in branches *)
+            let term_borrowed = VarSet.union borrowed branches_owned in
+            let term_owned = VarSet.diff owned branches_owned in
+            let (dups, translated_term) = ircv term_borrowed term_owned term in
+            let translated_nil = irc borrowed nil_owned nil in
+            let translated_cons = irc borrowed cons_owned e in
+            let final_nil =
+                WithPos.make ~pos:(WithPos.pos nil) (Seq (nil_drop, translated_nil))
+            in
+            let final_cons =
+                WithPos.make ~pos:(WithPos.pos e) (Seq (cons_drop, translated_cons))
+            in
+            let translated_case_l =
+                wrap (CaseL {
+                    term = translated_term;
+                    ty;
+                    nil = final_nil;
+                    cons = ((bnd1, bnd2), final_cons)
+                })
+            in
+            WithPos.make ~pos (Seq (WithPos.make (Dup dups), translated_case_l))
+        | New interface -> (* DONE *)
             wrap (New interface)
-        | Spawn e ->
+        | Spawn e -> (* DONE *)
             wrap (Spawn (irc borrowed owned e))
-        | Send { target; message = (tag, message_values); iname } ->
-            wrap (Send { target = ircv borrowed owned target; message = (tag, List.map (ircv borrowed owned) message_values); iname })
-        | Free (v, iname) ->
-            wrap (Free (ircv borrowed owned v, iname))
-        | Guard { target; pattern; guards; iname } ->
+        | Send { target; message = (tag, message_values); iname } -> (* TODO Val Seq *)
+            begin
+                match transform_val_sequence borrowed owned (target :: message_values) with
+                    | (dups, target' :: message_values') ->
+                        let dups_list = VarMultiset.bindings dups in
+                        wrap (Seq (WithPos.make (Dup dups_list),
+                        wrap <| Send { target = target'; message = (tag, message_values'); iname }))
+                    (* impossible; transform_val_sequence always gives the same number of values back *)
+                    | _ -> assert false
+            end
+        | Free (v, iname) -> (* DONE *)
+            let (dups, v') = ircv borrowed owned v in
+            wrap (Seq (WithPos.make (Dup dups), wrap <| Free (v', iname)))
+        | Guard { target; pattern; guards; iname } -> (* TODO *)
             wrap (Guard { target = ircv borrowed owned target; pattern; guards = List.map (ircg borrowed owned) guards; iname })
-        | Drop vars ->
-            wrap (Drop vars)
-        | Dup vars ->
-            wrap (Dup vars)
+        | Drop _
+        | Dup _ -> raise <| 
+            Errors.internal_error
+                "reference_counting.ml"
+                "Reference counting pass should not see Drop or Dup nodes"
+(* Helper function to annotate an ordered sequence of values. We need to consider all subsequent
+    variables used in a sequence as borrowed. The best way of doing this is to reverse the
+    list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)
+and transform_val_sequence borrowed owned vs : (VarMultiset.t * value list) =
+    let rec transform_vals fvs_acc = function
+        | [] -> ([], VarMultiset.empty)
+        | (cur_val :: vals) ->
+            let cur_borrowed = VarSet.union borrowed fvs_acc in
+            let cur_owned = VarSet.(inter (diff owned fvs_acc) (Ir.free_variables_value cur_val)) in
+            let (new_dups, transformed_val) =
+                insert_reference_counting_val cur_borrowed cur_owned cur_val
+            in
+            let (remaining_vals, remaining_dups) =
+                transform_vals
+                    (VarSet.union fvs_acc cur_owned)
+                    vals
+            in
+            (transformed_val :: remaining_vals, VarMultiset.combine new_dups remaining_dups)
+    in
+    let (transformed_vals_rev, dups) =
+        transform_vals VarSet.empty (List.rev vs)
+    in
+    (dups, List.rev transformed_vals_rev)
 (* Since we're in FGCBV, we need to depart from the Perceus algorithm slightly.
 Rules like `D,x | . |- x ~~> dup x; x` no longer work as we are making a value into a computation.
 We can only ever return syntactic values.
@@ -63,30 +280,6 @@ It's not as exactly local as Perceus but it's (hopefully!) safe.
 and insert_reference_counting_val borrowed owned value : (VarMultiset.t * value)=
     let pos = WithPos.pos value in
     let wrap = WithPos.make ~pos in
-    (* Helper function to annotate a sequence of values. We need to consider all subsequent
-       variables used in a sequence as borrowed. The best way of doing this is to reverse the
-       list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)
-    let transform_val_sequence borrowed owned vs =
-        let rec transform_vals fvs_acc = function
-            | [] -> ([], VarMultiset.empty)
-            | (cur_val :: vals) ->
-                let cur_borrowed = VarSet.union borrowed fvs_acc in
-                let cur_owned = VarSet.(inter (diff owned fvs_acc) (Ir.free_variables_value cur_val)) in
-                let (new_dups, transformed_val) =
-                    insert_reference_counting_val cur_borrowed cur_owned cur_val
-                in
-                let (remaining_vals, remaining_dups) =
-                    transform_vals
-                        (VarSet.union fvs_acc cur_owned)
-                        vals
-                in
-                (transformed_val :: remaining_vals, VarMultiset.combine new_dups remaining_dups)
-        in
-        let (transformed_vals_rev, dups) =
-            transform_vals VarSet.empty (List.rev vs)
-        in
-        (dups, List.rev transformed_vals_rev)
-    in
     match WithPos.node value with
         | VAnnotate (v, ty) ->
             let (dups, v) = insert_reference_counting_val borrowed owned v in

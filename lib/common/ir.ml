@@ -166,94 +166,118 @@ and guard_node =
         data = false }]
 
 
-let rec free_variables comp : VarSet.t =
+let remove_decl_names (decls : Binder.t list) (vars : VarSet.t) : VarSet.t =
+    let decl_vars =
+        decls
+        |> List.map Var.of_binder
+        |> VarSet.of_list
+    in
+    VarSet.diff vars decl_vars
+
+let rec free_variables ?(decls = []) comp : VarSet.t =
     let union_many = List.fold_left VarSet.union VarSet.empty in
     let delete_binders binders vars =
         List.fold_left (fun acc binder -> VarSet.remove (Var.of_binder binder) acc) vars binders
     in
-    match WithPos.node comp with
-    | Annotate (comp, _) ->
-        free_variables comp
-    | Let { binder; term; cont } ->
-        VarSet.union
-            (free_variables term)
-            (VarSet.remove (Var.of_binder binder) (free_variables cont))
-    | Seq (comp1, comp2) ->
-        VarSet.union (free_variables comp1) (free_variables comp2)
-    | Return value ->
-        free_variables_value value
-    | App { func; args } ->
-        union_many (free_variables_value func :: List.map free_variables_value args)
-    | If { test; then_expr; else_expr } ->
-        union_many [free_variables_value test; free_variables then_expr; free_variables else_expr]
-    | LetTuple { binders; tuple; cont } ->
-        let tuple_vars = free_variables_value tuple in
-        let cont_vars =
-            binders
-            |> List.map fst
-            |> fun binders -> delete_binders binders (free_variables cont)
-        in
-        VarSet.union tuple_vars cont_vars
-    | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
-        union_many
-            [ free_variables_value term
-            ; VarSet.remove (Var.of_binder binder1) (free_variables comp1)
-            ; VarSet.remove (Var.of_binder binder2) (free_variables comp2)
-            ]
-    | CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
-        union_many
-            [ free_variables_value term
-            ; free_variables nil
-            ; free_variables comp |> VarSet.remove (Var.of_binder binder1) |> VarSet.remove (Var.of_binder binder2)
-            ]
-    | New _ ->
-        VarSet.empty
-    | Spawn comp ->
-        free_variables comp
-    | Send { target; message = (_, values); iname = _ } ->
-        union_many (free_variables_value target :: List.map free_variables_value values)
-    | Free (value, _) ->
-        free_variables_value value
-    | Guard { target; pattern = _; guards; iname = _ } ->
-        union_many (free_variables_value target :: List.map free_variables_guard guards)
-    | Drop vars
-    | Dup vars ->
-        List.fold_left (fun acc (var, _) -> VarSet.add var acc) VarSet.empty vars
-and free_variables_value value : VarSet.t =
+    let vars =
+        match WithPos.node comp with
+        | Annotate (comp, _) ->
+            free_variables ~decls comp
+        | Let { binder; term; cont } ->
+            VarSet.union
+                (free_variables ~decls term)
+                (VarSet.remove (Var.of_binder binder) (free_variables ~decls cont))
+        | Seq (comp1, comp2) ->
+            VarSet.union (free_variables ~decls comp1) (free_variables ~decls comp2)
+        | Return value ->
+            free_variables_value ~decls value
+        | App { func; args } ->
+            union_many (free_variables_value ~decls func :: List.map (free_variables_value ~decls) args)
+        | If { test; then_expr; else_expr } ->
+            union_many [free_variables_value ~decls test; free_variables ~decls then_expr; free_variables ~decls else_expr]
+        | LetTuple { binders; tuple; cont } ->
+            let tuple_vars = free_variables_value ~decls tuple in
+            let cont_vars =
+                binders
+                |> List.map fst
+                |> fun binders -> delete_binders binders (free_variables ~decls cont)
+            in
+            VarSet.union tuple_vars cont_vars
+        | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
+            union_many
+                [ free_variables_value ~decls term
+                ; VarSet.remove (Var.of_binder binder1) (free_variables ~decls comp1)
+                ; VarSet.remove (Var.of_binder binder2) (free_variables ~decls comp2)
+                ]
+        | CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
+            union_many
+                [ free_variables_value ~decls term
+                ; free_variables ~decls nil
+                ; free_variables ~decls comp |> VarSet.remove (Var.of_binder binder1) |> VarSet.remove (Var.of_binder binder2)
+                ]
+        | New _ ->
+            VarSet.empty
+        | Spawn comp ->
+            free_variables ~decls comp
+        | Send { target; message = (_, values); iname = _ } ->
+            union_many (free_variables_value ~decls target :: List.map (free_variables_value ~decls) values)
+        | Free (value, _) ->
+            free_variables_value ~decls value
+        | Guard { target; pattern = _; guards; iname = _ } ->
+            union_many (free_variables_value ~decls target :: List.map (free_variables_guard ~decls) guards)
+        | Drop vars
+        | Dup vars ->
+            List.fold_left (fun acc (var, _) -> VarSet.add var acc) VarSet.empty vars
+    in
+    remove_decl_names decls vars
+and free_variables_value ?(decls = []) value : VarSet.t =
     let union_many = List.fold_left VarSet.union VarSet.empty in
-    match WithPos.node value with
-    | VAnnotate (value, _) ->
-        free_variables_value value
-    | Atom _
-    | Constant _
-    | Primitive _
-    | Nil ->
-        VarSet.empty
-    | Variable (var, _) ->
-        VarSet.singleton var
-    | Tuple values ->
-        union_many (List.map free_variables_value values)
-    | Cons (value1, value2) ->
-        VarSet.union (free_variables_value value1) (free_variables_value value2)
-    | Inl value
-    | Inr value ->
-        free_variables_value value
-    | Lam { linear = _; parameters; result_type = _; body } ->
-        let body_vars = free_variables body in
-        parameters
-        |> List.map fst
-        |> List.fold_left (fun acc binder -> VarSet.remove (Var.of_binder binder) acc) body_vars
-and free_variables_guard guard : VarSet.t =
-    match WithPos.node guard with
-    | Receive { tag = _; payload_binders; mailbox_binder; strategy = _; cont } ->
-        List.fold_left
-            (fun acc binder -> VarSet.remove (Var.of_binder binder) acc)
-            (free_variables cont)
-            (mailbox_binder :: payload_binders)
-    | Empty (binder, comp) ->
-        VarSet.remove (Var.of_binder binder) (free_variables comp)
-    | Fail ->
-        VarSet.empty
+    let vars =
+        match WithPos.node value with
+        | VAnnotate (value, _) ->
+            free_variables_value ~decls value
+        | Atom _
+        | Constant _
+        | Primitive _
+        | Nil ->
+            VarSet.empty
+        | Variable (var, _) ->
+            VarSet.singleton var
+        | Tuple values ->
+            union_many (List.map (free_variables_value ~decls) values)
+        | Cons (value1, value2) ->
+            VarSet.union (free_variables_value ~decls value1) (free_variables_value ~decls value2)
+        | Inl value
+        | Inr value ->
+            free_variables_value ~decls value
+        | Lam { linear = _; parameters; result_type = _; body } ->
+            let body_vars = free_variables ~decls body in
+            parameters
+            |> List.map fst
+            |> List.fold_left (fun acc binder -> VarSet.remove (Var.of_binder binder) acc) body_vars
+    in
+    remove_decl_names decls vars
+and free_variables_guard ?(decls = []) guard : VarSet.t =
+    let vars =
+        match WithPos.node guard with
+        | Receive { tag = _; payload_binders; mailbox_binder; strategy = _; cont } ->
+            List.fold_left
+                (fun acc binder -> VarSet.remove (Var.of_binder binder) acc)
+                (free_variables ~decls cont)
+                (mailbox_binder :: payload_binders)
+        | Empty (binder, comp) ->
+            VarSet.remove (Var.of_binder binder) (free_variables ~decls comp)
+        | Fail ->
+            VarSet.empty
+    in
+    remove_decl_names decls vars
+
+let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
+    if List.is_empty dups then
+        comp
+    else
+        let pos = WithPos.pos comp in
+        WithPos.make ~pos (Seq (WithPos.make (Dup dups), comp))
 
 (* Pretty-printing of the AST *)
 (* Programs *)
@@ -370,11 +394,11 @@ and pp_comp ppf comp_with_pos =
             Type.Pattern.pp pattern
             (pp_print_newline_list pp_guard) guards
     | Drop vars ->
-        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.name var) count in
+        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
         fprintf ppf "drop (%a)"
             (pp_print_comma_list pp_var) vars
     | Dup vars ->
-        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.name var) count in
+        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
         fprintf ppf "dup (%a)"
             (pp_print_comma_list pp_var) vars
 and pp_value ppf v =

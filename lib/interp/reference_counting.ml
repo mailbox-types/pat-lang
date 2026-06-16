@@ -70,7 +70,7 @@ let rec insert_reference_counting borrowed owned comp =
             let else_drop = mk_drop (VarSet.diff branches_owned else_owned) in
             let test_borrowed = VarSet.union borrowed branches_owned in
             let test_owned = VarSet.diff owned branches_owned in
-            let (dups, translated_test) = ircv test_owned test_borrowed test in
+            let (dups, translated_test) = ircv test_borrowed test_owned test in
             let translated_then = irc then_owned borrowed then_expr in
             let translated_else = irc then_owned borrowed else_expr in
             let final_then_expr =
@@ -119,12 +119,16 @@ let rec insert_reference_counting borrowed owned comp =
         | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
             let bnd1_var = Var.of_binder bnd1 in
             let bnd2_var = Var.of_binder bnd2 in
-            let e1_fvs = VarSet.remove bnd1_var (Ir.free_variables e1) in
-            let e2_fvs = VarSet.remove bnd2_var (Ir.free_variables e2) in
+            let e1_fvs = Ir.free_variables e1 in
+            let e2_fvs = Ir.free_variables e2 in
             let e1_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd1_var)) e1_fvs in
             let e2_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd2_var)) e2_fvs in
+            let e1_owned_without_binder = VarSet.diff e1_owned (VarSet.singleton bnd1_var) in
+            let e2_owned_without_binder = VarSet.diff e2_owned (VarSet.singleton bnd2_var) in
             (* branches_owned: all owned variables occurring in either branch *)
-            let branches_owned = VarSet.inter owned (VarSet.union e1_fvs e2_fvs) in
+            let branches_owned =
+                VarSet.inter owned (VarSet.union e1_owned_without_binder e2_owned_without_binder)
+            in
             let mk_drop vars =
                 let var_list =
                     VarSet.elements vars
@@ -170,15 +174,20 @@ let rec insert_reference_counting borrowed owned comp =
             let bnd1_var = Var.of_binder bnd1 in
             let bnd2_var = Var.of_binder bnd2 in
             let nil_fvs = Ir.free_variables nil in
-            let cons_fvs = Ir.free_variables e |> VarSet.remove bnd1_var |> VarSet.remove bnd2_var in
+            let cons_fvs = Ir.free_variables e in
             let nil_owned = VarSet.inter owned nil_fvs in
             let cons_owned =
                 VarSet.inter
                     (VarSet.union owned (VarSet.of_list [bnd1_var; bnd2_var]))
                     cons_fvs
             in
+            let cons_owned_without_binders =
+                VarSet.diff cons_owned (VarSet.of_list [bnd1_var; bnd2_var])
+            in
             (* branches_owned: all owned variables occurring in either branch *)
-            let branches_owned = VarSet.inter owned (VarSet.union nil_fvs cons_fvs) in
+            let branches_owned =
+                VarSet.inter owned (VarSet.union nil_fvs cons_owned_without_binders)
+            in
             let mk_drop vars =
                 let var_list =
                     VarSet.elements vars
@@ -231,8 +240,22 @@ let rec insert_reference_counting borrowed owned comp =
         | Free (v, iname) -> (* DONE *)
             let (dups, v') = ircv borrowed owned v in
             wrap (Seq (WithPos.make (Dup dups), wrap <| Free (v', iname)))
-        | Guard { target; pattern; guards; iname } -> (* TODO *)
-            wrap (Guard { target = ircv borrowed owned target; pattern; guards = List.map (ircg borrowed owned) guards; iname })
+        | Guard { target; pattern; guards; iname } ->
+            let guards_fvs =
+                List.fold_left
+                    (fun acc g -> VarSet.union acc (Ir.free_variables_guard g))
+                    VarSet.empty
+                    guards
+            in
+            let guards_owned = VarSet.inter owned guards_fvs in
+            let target_borrowed = VarSet.union borrowed guards_owned in
+            let target_owned = VarSet.diff owned guards_owned in
+            let (dups, translated_target) = ircv target_borrowed target_owned target in
+            let translated_guards = List.map (ircg borrowed guards_owned) guards in
+            let translated_guard =
+                wrap (Guard { target = translated_target; pattern; guards = translated_guards; iname })
+            in
+            WithPos.make ~pos (Seq (WithPos.make (Dup dups), translated_guard))
         | Drop _
         | Dup _ -> raise <| 
             Errors.internal_error
@@ -335,14 +358,56 @@ and insert_reference_counting_val borrowed owned value : (VarMultiset.t * value)
                 ))
             in
             (to_dup, wrap (Lam { linear; parameters; result_type; body = transformed_body }))
-and insert_reference_counting_guard borrowed owned guard =
+and insert_reference_counting_guard borrowed guards_owned guard =
     let pos = WithPos.pos guard in
     let wrap = WithPos.make ~pos in
     let irc = insert_reference_counting in
     match WithPos.node guard with
         | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
-            wrap (Receive { tag; payload_binders; mailbox_binder; strategy; cont = irc borrowed owned cont })
+            let binders_set =
+                mailbox_binder :: payload_binders
+                |> List.map Var.of_binder
+                |> VarSet.of_list
+            in
+            let cont_fvs = Ir.free_variables cont in
+            (* Variables owned by all guards + binders *)
+            let guards_owned_with_binders = VarSet.union guards_owned binders_set in
+            (* owned env: intersection of this environment with vars actually used *)
+            let cont_owned = VarSet.inter guards_owned_with_binders cont_fvs in
+            (* to drop: all vars incl. binders minus what is actually used *)
+            let cont_drop = VarSet.diff guards_owned_with_binders cont_owned in
+            let translated_cont = irc borrowed cont_owned cont in
+            let final_cont =
+                if VarSet.is_empty cont_drop then
+                    translated_cont
+                else
+                    WithPos.make ~pos:(WithPos.pos cont)
+                        (Seq (
+                            WithPos.make (Drop (VarSet.elements cont_drop |> List.map (fun v -> (v, 1)))),
+                            translated_cont
+                        ))
+            in
+            wrap (Receive { tag; payload_binders; mailbox_binder; strategy; cont = final_cont })
+        (* Similar to case-expressions, just processed in isolation *)
         | Empty (binder, e) ->
-            wrap (Empty (binder, irc borrowed owned e))
+            let binder_var = Var.of_binder binder in
+            let e_fvs = Ir.free_variables e in
+            let guards_owned_plus_binder = VarSet.union guards_owned (VarSet.singleton binder_var) in
+            let e_owned =
+                VarSet.inter guards_owned_plus_binder e_fvs
+            in
+            let e_drop = VarSet.diff guards_owned_plus_binder e_owned in
+            let translated_e = irc borrowed e_owned e in
+            let final_e =
+                if VarSet.is_empty e_drop then
+                    translated_e
+                else
+                    WithPos.make ~pos:(WithPos.pos e)
+                        (Seq (
+                            WithPos.make (Drop (VarSet.elements e_drop |> List.map (fun v -> (v, 1)))),
+                            translated_e
+                        ))
+            in
+            wrap (Empty (binder, final_e))
         | Fail ->
             wrap Fail

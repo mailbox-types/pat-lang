@@ -17,8 +17,22 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
     match WithPos.node comp with
         | Annotate (c, ty) -> (* OK *)
             wrap (Annotate (irc borrowed owned c, ty))
-        | Let { binder; term; cont } -> (* TODO *)
-            wrap (Let { binder; term = irc borrowed owned term; cont = irc borrowed owned cont })
+        | Let { binder; term; cont } -> (* LOL! Thought I'd finished this! *)
+            let binder_var = Var.of_binder binder in
+            let cont_fvs = Ir.free_variables cont in
+            let e2_owned = VarSet.(inter owned (diff cont_fvs (singleton binder_var))) in
+            let e1_owned = VarSet.diff owned e2_owned in
+            let e1_trans = irc borrowed e1_owned term in
+            (* Insert a drop if binder is unused in e2 *)
+            if VarSet.mem binder_var cont_fvs then
+                let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
+                wrap (Let { binder; term = e1_trans; cont = e2_trans })
+            else
+                let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
+                let e2_trans_with_drop = 
+                    wrap (Seq (WithPos.make <| Drop ([(binder_var, 1)]), e2_trans))
+                in
+                wrap (Let { binder; term = e1_trans; cont = e2_trans_with_drop })
         | Seq (e1, e2) -> (* DONE *)
             (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
             let e2_owned = VarSet.inter owned (Ir.free_variables ~decls e2) in
@@ -34,7 +48,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
         | Return v -> (* DONE *)
             let (dups, v') = ircv borrowed owned v in
             Ir.insert_dup dups (wrap <| Return v')
-        | App { func; args } -> (* TODO Val Seq *)
+        | App { func; args } ->
             begin
                 match transform_val_sequence decls borrowed owned (func :: args) with
                     | (dups, func' :: args') ->
@@ -57,27 +71,23 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 (VarSet.union
                     (Ir.free_variables ~decls then_expr)
                     (Ir.free_variables ~decls else_expr)) in
-            let mk_drop vars =
+            let mk_drop vars cont =
                 let var_list =
-                    VarSet.diff branches_owned vars
+                    vars
                     |> VarSet.elements
                     |> List.map (fun v -> (v, 1))
                 in
-                WithPos.make (Drop var_list)
+                Ir.insert_drop var_list cont
             in
-            let then_drop = mk_drop (VarSet.diff branches_owned then_owned) in
-            let else_drop = mk_drop (VarSet.diff branches_owned else_owned) in
+            (* Drop everything in the branches_owned set that is not in the current *)
             let test_borrowed = VarSet.union borrowed branches_owned in
             let test_owned = VarSet.diff owned branches_owned in
             let (dups, translated_test) = ircv test_borrowed test_owned test in
             let translated_then = irc then_owned borrowed then_expr in
             let translated_else = irc then_owned borrowed else_expr in
-            let final_then_expr =
-                WithPos.make ~pos:(WithPos.pos then_expr) (Seq (then_drop, translated_then))
-            in
-            let final_else_expr =
-                WithPos.make ~pos:(WithPos.pos else_expr) (Seq (else_drop, translated_else))
-            in
+
+            let final_then_expr = mk_drop (VarSet.diff branches_owned then_owned) translated_then in
+            let final_else_expr = mk_drop (VarSet.diff branches_owned else_owned) translated_else in
             let translated_if = 
                 wrap (If { 
                     test = translated_test; then_expr = final_then_expr; else_expr = final_else_expr })

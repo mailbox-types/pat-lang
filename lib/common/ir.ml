@@ -279,6 +279,14 @@ let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
         let pos = WithPos.pos comp in
         WithPos.make ~pos (Seq (WithPos.make (Dup dups), comp))
 
+let insert_drop (drops : (Var.t * int) list) (comp : comp) : comp =
+    if List.is_empty drops then
+        comp
+    else
+        let pos = WithPos.pos comp in
+        WithPos.make ~pos (Seq (WithPos.make (Drop drops), comp))
+
+
 let normalise_seq comp =
     let right_nest_seq c =
         let rec mk_right_nested left right =

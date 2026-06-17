@@ -5,6 +5,11 @@ open Util.Utility
 
 module VarMultiset = Multiset.Make(Var)
 
+let pp_varset ppf s =
+    Format.pp_print_string ppf "{";
+    VarSet.iter (fun v -> Format.fprintf ppf "%a " Var.pp v) s;
+    Format.pp_print_string ppf "}"
+
 let rec insert_reference_counting_comp decls borrowed owned comp =
     let pos = WithPos.pos comp in
     let wrap = WithPos.make ~pos in
@@ -235,7 +240,9 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             wrap (New interface)
         | Spawn e -> (* DONE *)
             wrap (Spawn (irc borrowed owned e))
-        | Send { target; message = (tag, message_values); iname } -> (* TODO Val Seq *)
+        | Send { target; message = (tag, message_values); iname } -> 
+            (* Issue is that we seem to not own the reference? Are we not getting parameters maybe? *)
+            let () = Format.printf "send %s owned %a\n%!" tag pp_varset owned in
             begin
                 match transform_val_sequence decls borrowed owned (target :: message_values) with
                     | (dups, target' :: message_values') ->
@@ -272,12 +279,23 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
 (* Helper function to annotate an ordered sequence of values. We need to consider all subsequent
     variables used in a sequence as borrowed. The best way of doing this is to reverse the
     list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)
+    (* 
+    Issue: for some reason we don't get consumerRef3 as owned...?
+    consumerRef3 ! Msg() -->
+    (dup ("consumerRef3":1);
+           (consumerRef3 ! Msg();*)
+           (* WIP: Go from here, sort this out *)
 and transform_val_sequence decls borrowed owned vs : (VarMultiset.t * value list) =
     let rec transform_vals fvs_acc = function
         | [] -> ([], VarMultiset.empty)
         | (cur_val :: vals) ->
             let cur_borrowed = VarSet.union borrowed fvs_acc in
-            let cur_owned = VarSet.(inter (diff owned fvs_acc) (Ir.free_variables_value ~decls cur_val)) in
+            let cur_owned = VarSet.(inter (diff owned fvs_acc) (Ir.free_variables_value ~decls cur_val)) in 
+            let () =
+                Format.printf "cur_borrowed: %a\ncur_owned: %a\n%!"
+                    pp_varset cur_borrowed
+                    pp_varset cur_owned
+            in
             let (new_dups, transformed_val) =
                 insert_reference_counting_val decls cur_borrowed cur_owned cur_val
             in
@@ -450,9 +468,10 @@ let insert_reference_counting prog =
             |> List.map (fun (b, _) -> Ir.Var.of_binder b)
             |> Ir.VarSet.of_list
         in
-        let decl_owned = Ir.VarSet.union parameter_vars (Ir.free_variables ~decls decl.decl_body) in
+        (* Nothing should be free in a declaration other than the variables
+        bound in the parameters, so our initial owned set is parameter_vars. *)
         let decl_body =
-            insert_reference_counting_comp decls Ir.VarSet.empty decl_owned decl.decl_body
+            insert_reference_counting_comp decls Ir.VarSet.empty parameter_vars decl.decl_body
             |> Ir.normalise_seq
         in
         Source_code.WithPos.make ~pos { decl with decl_body }

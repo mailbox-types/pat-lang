@@ -279,6 +279,33 @@ let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
         let pos = WithPos.pos comp in
         WithPos.make ~pos (Seq (WithPos.make (Dup dups), comp))
 
+let normalise_seq comp =
+    let right_nest_seq c =
+        let rec mk_right_nested left right =
+            match WithPos.node left with
+            | Seq (a, b) ->
+                let right' = WithPos.make ~pos:(WithPos.pos right) (Seq (b, right)) in
+                mk_right_nested a right'
+            | _ ->
+                WithPos.make ~pos:(WithPos.pos c) (Seq (left, right))
+        in
+        match WithPos.node c with
+        | Seq (c1, c2) -> mk_right_nested c1 c2
+        | _ -> c
+    in
+    let visitor =
+        object
+            inherit [_] map as super
+
+            method! visit_comp env c =
+                let c' = super#visit_comp env c in
+                right_nest_seq c'
+
+            method visit_t _env x = x
+        end
+    in
+    visitor#visit_comp () comp
+
 (* Pretty-printing of the AST *)
 (* Programs *)
 let rec pp_program ppf { prog_interfaces; prog_decls; prog_body } =

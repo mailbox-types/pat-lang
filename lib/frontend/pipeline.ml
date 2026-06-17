@@ -6,43 +6,8 @@ let desugar p =
     |> Desugar_let_annotations.desugar
     |> Desugar_sugared_guards.desugar
 
-let with_reference_counting (ir : Ir.program) =
-    let decls =
-        ir.prog_decls
-        |> List.map (fun d ->
-            let (decl : Ir.decl) = Source_code.WithPos.node d in
-            decl.decl_name)
-    in
-    let () =
-        let decl_names = List.map (Format.asprintf "%a" Ir.Binder.pp) decls in
-        Format.printf "=== RC Decls: [%s] ===\n%!" (String.concat ", " decl_names)
-    in
-    let transform_body c =
-        Interp.Reference_counting.insert_reference_counting
-            decls
-            Ir.VarSet.empty
-            Ir.VarSet.empty
-            c
-    in
-    let transform_decl decl_with_pos =
-        let pos = Source_code.WithPos.pos decl_with_pos in
-        let (decl : Ir.decl) = Source_code.WithPos.node decl_with_pos in
-        let parameter_vars =
-            decl.decl_parameters
-            |> List.map (fun (b, _) -> Ir.Var.of_binder b)
-            |> Ir.VarSet.of_list
-        in
-        let decl_owned = Ir.VarSet.union parameter_vars (Ir.free_variables ~decls decl.decl_body) in
-        let decl_body =
-            Interp.Reference_counting.insert_reference_counting decls Ir.VarSet.empty decl_owned decl.decl_body
-        in
-        Source_code.WithPos.make ~pos { decl with decl_body }
-    in
-    {
-        ir with
-            prog_decls = List.map transform_decl ir.prog_decls;
-            prog_body = Option.map transform_body ir.prog_body;
-    }
+let with_reference_counting prog : Ir.program = 
+    Interp.Reference_counting.insert_reference_counting prog 
 
 let typecheck p ir = 
     let () =

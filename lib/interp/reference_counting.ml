@@ -5,10 +5,10 @@ open Util.Utility
 
 module VarMultiset = Multiset.Make(Var)
 
-let rec insert_reference_counting decls borrowed owned comp =
+let rec insert_reference_counting_comp decls borrowed owned comp =
     let pos = WithPos.pos comp in
     let wrap = WithPos.make ~pos in
-    let irc borrowed owned c = insert_reference_counting decls borrowed owned c in
+    let irc borrowed owned c = insert_reference_counting_comp decls borrowed owned c in
     let ircv borrowed owned v = 
         let (dups, v') = insert_reference_counting_val decls borrowed owned v in
         (VarMultiset.bindings dups, v')
@@ -355,14 +355,14 @@ and insert_reference_counting_val decls borrowed owned value : (VarMultiset.t * 
                 WithPos.make ~pos:body_pos
                 (Seq (
                     WithPos.make (Drop to_drop),
-                    insert_reference_counting decls VarSet.empty body_owned_vars body
+                    insert_reference_counting_comp decls VarSet.empty body_owned_vars body
                 ))
             in
             (to_dup, wrap (Lam { linear; parameters; result_type; body = transformed_body }))
 and insert_reference_counting_guard decls borrowed guards_owned guard =
     let pos = WithPos.pos guard in
     let wrap = WithPos.make ~pos in
-    let irc borrowed owned c = insert_reference_counting decls borrowed owned c in
+    let irc borrowed owned c = insert_reference_counting_comp decls borrowed owned c in
     match WithPos.node guard with
         | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
             let binders_set =
@@ -412,3 +412,43 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
             wrap (Empty (binder, final_e))
         | Fail ->
             wrap Fail
+
+let insert_reference_counting prog =
+    let decls =
+            prog.prog_decls
+            |> List.map (fun d ->
+                let (decl : Ir.decl) = Source_code.WithPos.node d in
+                decl.decl_name)
+        in
+    let () =
+        let decl_names = List.map (Format.asprintf "%a" Ir.Binder.pp) decls in
+        Format.printf "=== RC Decls: [%s] ===\n%!" (String.concat ", " decl_names)
+    in
+    let transform_body c =
+        insert_reference_counting_comp
+            decls
+            Ir.VarSet.empty
+            Ir.VarSet.empty
+            c
+        |> Ir.normalise_seq
+    in
+    let transform_decl decl_with_pos =
+        let pos = Source_code.WithPos.pos decl_with_pos in
+        let (decl : Ir.decl) = Source_code.WithPos.node decl_with_pos in
+        let parameter_vars =
+            decl.decl_parameters
+            |> List.map (fun (b, _) -> Ir.Var.of_binder b)
+            |> Ir.VarSet.of_list
+        in
+        let decl_owned = Ir.VarSet.union parameter_vars (Ir.free_variables ~decls decl.decl_body) in
+        let decl_body =
+            insert_reference_counting_comp decls Ir.VarSet.empty decl_owned decl.decl_body
+            |> Ir.normalise_seq
+        in
+        Source_code.WithPos.make ~pos { decl with decl_body }
+    in
+    {
+        prog with
+            prog_decls = List.map transform_decl prog.prog_decls;
+            prog_body = Option.map transform_body prog.prog_body;
+    }

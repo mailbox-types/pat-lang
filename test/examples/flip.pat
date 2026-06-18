@@ -2,10 +2,11 @@ interface Test { Msg() }
 
 def producer(consumerRef: Test!): Unit {
     if (randBool()) {
+        print("heads");
         consumerRef ! Msg();
         producer(consumerRef)
     } else {
-        ()
+        print("tails")
     }
 }
 
@@ -22,3 +23,5 @@ def main(): Unit {
     spawn { producer(mb) };
     consumer(mb)
 }
+
+main()

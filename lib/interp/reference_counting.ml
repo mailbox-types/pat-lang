@@ -245,8 +245,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
         | Spawn e -> (* DONE *)
             wrap (Spawn (irc borrowed owned e))
         | Send { target; message = (tag, message_values); iname } -> 
-            (* Issue is that we seem to not own the reference? Are we not getting parameters maybe? *)
-            let () = Format.printf "send %s owned %a\n%!" tag pp_varset owned in
             begin
                 match transform_val_sequence decls borrowed owned (target :: message_values) with
                     | (dups, target' :: message_values') ->
@@ -295,11 +293,6 @@ and transform_val_sequence decls borrowed owned vs : (VarMultiset.t * value list
         | (cur_val :: vals) ->
             let cur_borrowed = VarSet.union borrowed fvs_acc in
             let cur_owned = VarSet.(inter (diff owned fvs_acc) (Ir.free_variables_value ~decls cur_val)) in 
-            let () =
-                Format.printf "cur_borrowed: %a\ncur_owned: %a\n%!"
-                    pp_varset cur_borrowed
-                    pp_varset cur_owned
-            in
             let (new_dups, transformed_val) =
                 insert_reference_counting_val decls cur_borrowed cur_owned cur_val
             in
@@ -448,14 +441,10 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
 
 let insert_reference_counting prog =
     let decls =
-            prog.prog_decls
-            |> List.map (fun d ->
-                let (decl : Ir.decl) = Source_code.WithPos.node d in
-                decl.decl_name)
-        in
-    let () =
-        let decl_names = List.map (Format.asprintf "%a" Ir.Binder.pp) decls in
-        Format.printf "=== RC Decls: [%s] ===\n%!" (String.concat ", " decl_names)
+        prog.prog_decls
+        |> List.map (fun d ->
+            let (decl : Ir.decl) = Source_code.WithPos.node d in
+            decl.decl_name)
     in
     let transform_body c =
         insert_reference_counting_comp

@@ -28,6 +28,13 @@ let typecheck p ir =
     let solution = Typecheck.Solve_constraints.solve_constraints constrs in
     let p = Sugar_ast.substitute_solution solution p in
     let ir = Ir.substitute_solution solution ir in
+    let () =
+        if Settings.(get eval) then
+            ir
+            |> with_reference_counting
+            |> Interp.Eval.run_to_completion
+            |> ignore
+    in
     (p, prety_opt, ir, ty, env, constrs)
 
 (* Frontend pipeline *)

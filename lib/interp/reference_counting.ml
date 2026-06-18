@@ -42,7 +42,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 in
                 wrap (Let { binder; term = e1_trans; cont = e2_trans_with_drop })
         | Seq (e1, e2) -> (* DONE *)
-            print_var_set "in Seq. owned set: " owned; 
             (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
             let e2_owned = VarSet.inter owned (Ir.free_variables ~decls e2) in
             (* e1_borrowed: borrowed env for typing e1. union of borrowed variables and e2_owned *)
@@ -58,8 +57,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let (dups, v') = ircv borrowed owned v in
             Ir.insert_dup dups (wrap <| Return v')
         | App { func; args } ->
-            print_var_set "in App case. borrowed: " borrowed;
-            print_var_set "in App case. owned: " owned;
             begin
                 match transform_val_sequence decls borrowed owned (func :: args) with
                     | (dups, func' :: args') ->
@@ -95,8 +92,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
 
             let then_owned = VarSet.inter branches_owned (Ir.free_variables ~decls then_expr) in
             let else_owned = VarSet.inter branches_owned (Ir.free_variables ~decls else_expr) in
-            print_var_set "Then branch owned: " then_owned;
-            print_var_set "Else branch owned: " else_owned;
             let translated_then = irc borrowed then_owned then_expr in
             let translated_else = irc borrowed else_owned else_expr in
 

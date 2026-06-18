@@ -30,6 +30,32 @@ module Binder = struct
         Format.pp_print_string ppf (prefix ^ (string_of_int x.id))
 end
 
+module RuntimeName = struct
+    type t = { id: int }
+    [@@name "runtime_name"]
+    [@@deriving visitors { variety = "map"; data = false }]
+
+    (* Accessors *)
+    let id x = x.id
+
+    let compare x1 x2 =
+        Int.compare x1.id x2.id
+
+    let source = ref 0
+
+    let gen () =
+        let res = !source in
+        incr source;
+        res
+
+    let make () =
+        { id = gen () }
+
+    (* Display *)
+    let pp ppf x =
+        Format.pp_print_string ppf ("_" ^ (string_of_int x.id))
+end
+
 module Var = struct
     type t = { id: int; name: string }
     [@@name "var"]
@@ -130,6 +156,7 @@ and value_node =
     | Constant of constant
     | Primitive of primitive_name
     | Variable of (Var.t[@name "var"]) * (Pretype.t[@name "pretype"]) option
+    | Name of (RuntimeName.t[@name "runtime_name"])
     | Tuple of value list
     | Nil
     | Cons of value * value
@@ -162,7 +189,7 @@ and guard_node =
         variety = "map";
         ancestors = [
             "Type.map"; "Pretype.map"; "Binder.map";
-            "Interface.map"; "Var.map"; "WithPos.map"];
+            "RuntimeName.map"; "Interface.map"; "Var.map"; "WithPos.map"];
         data = false }]
 
 
@@ -239,6 +266,7 @@ and free_variables_value ?(decls = []) value : VarSet.t =
         | Atom _
         | Constant _
         | Primitive _
+        | Name _
         | Nil ->
             VarSet.empty
         | Variable (var, _) ->
@@ -445,6 +473,7 @@ and pp_value ppf v =
     | Atom name -> Format.pp_print_string ppf (":" ^ name)
     | Primitive prim -> Format.pp_print_string ppf prim
     | Variable (var, _) -> Var.pp ppf var
+    | Name runtime_name -> RuntimeName.pp ppf runtime_name
     | Constant c -> Constant.pp ppf c
     | Tuple vs ->
         fprintf ppf "%a" (pp_print_comma_list pp_value) vs

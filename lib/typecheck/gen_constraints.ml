@@ -73,6 +73,8 @@ let rec synthesise_val :
                     | _, _ ->
                         Gripers.synth_variable v [pos]
             end
+        | Name _ ->
+            raise (Errors.internal_error "gen_constraints.ml" "RuntimeName values should only be inserted after typechecking")
         (* In the formalism, this is a checking case
            rather than a synthesis case. However, we can treat it as a synthesis
            case here since we have annotations on arguments and the body (which
@@ -177,6 +179,8 @@ and check_val :
         | Variable (v, Some pty) ->
             check_pretype_consistency ty pty;
             Ty_env.singleton v ty, Constraint_set.empty
+        | Name _ ->
+            raise (Errors.internal_error "gen_constraints.ml" "RuntimeName values should only be inserted after typechecking")
         | Inl v ->
             begin
                 match ty with

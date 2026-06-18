@@ -343,6 +343,7 @@ and insert_reference_counting_val decls borrowed owned value : (VarMultiset.t * 
         | Atom _
         | Constant _
         | Primitive _
+        | Name _
         | Nil ->
             (VarMultiset.empty, value)
         | Variable (x, _) ->

@@ -169,6 +169,8 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
                 args = param_types;
                 result = result_type 
             }
+        | Name _ ->
+            raise (Errors.internal_error "pretypecheck.ml" "RuntimeName values should only be inserted after typechecking")
         | Inl _ | Inr _ -> Gripers.cannot_synth_sum value
         | Nil -> Gripers.cannot_synth_nil value
 and check_val ienv env value ty =

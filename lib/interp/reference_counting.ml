@@ -10,10 +10,13 @@ let pp_varset ppf s =
     VarSet.iter (fun v -> Format.fprintf ppf "%a " Var.pp v) s;
     Format.pp_print_string ppf "}"
 
+let print_var_set note varset =
+    Format.printf "%s%a\n" note pp_varset varset
+
 let rec insert_reference_counting_comp decls borrowed owned comp =
     let pos = WithPos.pos comp in
     let wrap = WithPos.make ~pos in
-    let irc borrowed owned c = insert_reference_counting_comp decls borrowed owned c in
+    let irc = insert_reference_counting_comp decls in
     let ircv borrowed owned v = 
         let (dups, v') = insert_reference_counting_val decls borrowed owned v in
         (VarMultiset.bindings dups, v')
@@ -39,6 +42,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 in
                 wrap (Let { binder; term = e1_trans; cont = e2_trans_with_drop })
         | Seq (e1, e2) -> (* DONE *)
+            print_var_set "in Seq. owned set: " owned; 
             (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
             let e2_owned = VarSet.inter owned (Ir.free_variables ~decls e2) in
             (* e1_borrowed: borrowed env for typing e1. union of borrowed variables and e2_owned *)
@@ -54,6 +58,8 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let (dups, v') = ircv borrowed owned v in
             Ir.insert_dup dups (wrap <| Return v')
         | App { func; args } ->
+            print_var_set "in App case. borrowed: " borrowed;
+            print_var_set "in App case. owned: " owned;
             begin
                 match transform_val_sequence decls borrowed owned (func :: args) with
                     | (dups, func' :: args') ->
@@ -70,8 +76,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
            However this isn't too big a deal -- drops will ensure same FVs in each branch. Then we can just
             say that the borrowed environment for the test is the union of the borrowed env and the owned env of the branches. *)
         | If { test; then_expr; else_expr } ->
-            let then_owned = VarSet.inter owned (Ir.free_variables ~decls then_expr) in
-            let else_owned = VarSet.inter owned (Ir.free_variables ~decls else_expr) in
             let branches_owned = VarSet.inter owned
                 (VarSet.union
                     (Ir.free_variables ~decls then_expr)
@@ -88,8 +92,13 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let test_borrowed = VarSet.union borrowed branches_owned in
             let test_owned = VarSet.diff owned branches_owned in
             let (dups, translated_test) = ircv test_borrowed test_owned test in
-            let translated_then = irc then_owned borrowed then_expr in
-            let translated_else = irc then_owned borrowed else_expr in
+
+            let then_owned = VarSet.inter branches_owned (Ir.free_variables ~decls then_expr) in
+            let else_owned = VarSet.inter branches_owned (Ir.free_variables ~decls else_expr) in
+            print_var_set "Then branch owned: " then_owned;
+            print_var_set "Else branch owned: " else_owned;
+            let translated_then = irc borrowed then_owned then_expr in
+            let translated_else = irc borrowed else_owned else_expr in
 
             let final_then_expr = mk_drop (VarSet.diff branches_owned then_owned) translated_then in
             let final_else_expr = mk_drop (VarSet.diff branches_owned else_owned) translated_else in
@@ -98,7 +107,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                     test = translated_test; then_expr = final_then_expr; else_expr = final_else_expr })
             in
             Ir.insert_dup dups translated_if
-        | LetTuple { binders; tuple; cont } -> (* TODO: Val then Expr *)
+        | LetTuple { binders; tuple; cont } ->
             let cont_fvs = Ir.free_variables ~decls cont in
             let binders_set = 
                 binders

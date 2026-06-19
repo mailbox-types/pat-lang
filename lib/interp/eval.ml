@@ -1,5 +1,15 @@
 open Common
 open Source_code
+open Util.Utility
+
+(* TODO: Current issue with reference counts going negative when waking blocked empty guards.
+In reality we should change things:
+  * Empty guards should only be fireable when the reference count is *zero*. 
+	* Guarding on a mailbox, much like sending on a mailbox, should consume a reference.
+	* Evaluating a receive guard should introduce a reference.
+This alone probably won't solve the issue but gives us a better base to work off.
+*)
+
 
 let max_steps_before_yield = 20
 
@@ -140,26 +150,32 @@ let decl_map program =
 
 let apply_refcount_delta env mailboxes vars sign =
 	List.fold_left
-		(fun acc (var, count) ->
+		(fun (mailboxes_acc, to_wake) (var, count) ->
 			if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
             match WithPos.node (lookup_env env var) with
             | Ir.Name mb ->
                 begin
-                    match RuntimeNameMap.find_opt mb acc with
+                    match RuntimeNameMap.find_opt mb mailboxes_acc with
                     | None ->
                         runtime_error
                             (Format.asprintf "Mailbox %a missing during reference-count update" Ir.RuntimeName.pp mb)
                     | Some (refcount, messages) ->
                         let next_refcount = refcount + (sign * count) in
+												let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
                         if next_refcount < 0 then
                             runtime_error
                                 (Format.asprintf "Mailbox %a reference count became negative: %a"
-                                    Ir.RuntimeName.pp mb pp_mailbox_entry (refcount, messages));
-                        RuntimeNameMap.add mb (next_refcount, messages) acc
+                                    Ir.RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
+												(* If the next reference count is 1, then we will need to wake any threads blocked
+												   waiting for this mailbox. *)
+												else if next_refcount = 0 then
+													(next_acc, mb :: to_wake)
+												else
+													(next_acc, to_wake)
                 end
-            | _ -> acc (* Reference counting for other things is a no-op at present. *)
+            | _ -> (mailboxes_acc, to_wake) (* Reference counting for other things is a no-op at present. *)
         )
-		mailboxes
+		(mailboxes, [])
 		vars
 
 let enqueue_unblocked blocked computations runtime_name =
@@ -168,12 +184,16 @@ let enqueue_unblocked blocked computations runtime_name =
 	| Some blocked_comp ->
 		(RuntimeNameMap.remove runtime_name blocked, computations @ [blocked_comp])
 
+let enqueue_unblocked_many blocked computations =
+	List.fold_left (uncurry enqueue_unblocked) (blocked, computations)
+
 let install_seq_frame saved_env next_comp current =
 	{ current with stack = SeqFrame { saved_env; next_comp } :: current.stack }
 
 let install_let_frame binder saved_env next_comp current =
 	{ current with stack = LetFrame { binder; saved_env; next_comp } :: current.stack }
 
+(* Handles a Return given the stack. Binds a value in a LetFrame, not in a SeqFrame *)
 let pop_frame_with_value value current =
 	match current.stack with
 	| [] -> None
@@ -189,12 +209,6 @@ let pop_frame_with_value value current =
 
 let inc_step state =
 	{ state with step_count = state.step_count + 1 }
-
-let schedule_if_needed state =
-	if state.step_count > max_steps_before_yield then
-		{ state with step_count = 0; computations = rotate_computations state.computations }
-	else
-		state
 
 let rec bind_many env binders values =
 	match binders, values with
@@ -243,16 +257,19 @@ let rec find_receive_guard guards messages =
 			| _ -> find_receive_guard rest messages
 		end
 
-let evaluate_guard runtime_name env guards messages =
+let evaluate_guard runtime_name env guards mailbox =
+	let (count, messages) = mailbox in
 	match messages with
 	| [] ->
+		(* If there aren't any messages then we'll need to check whether the reference count is 1. 
+		   If so we can evaluate the empty guard; if not then we'll need to block *)
 		begin
-			match find_empty_guard guards with
-			| None -> None
-			| Some (mailbox_binder, cont) ->
+			match (count, find_empty_guard guards) with
+			| (1, Some (mailbox_binder, cont)) ->
 				let mailbox_value = mk_value (Ir.Name runtime_name) in
 				let next_env = VarMap.add (Ir.Var.of_binder mailbox_binder) mailbox_value env in
 				Some { next_env; next_comp = cont; remaining_messages = messages }
+			| _ -> None
 		end
 	| _ ->
 		begin
@@ -459,9 +476,12 @@ let apply_primitive prim env args pos =
 let step_current state =
 	match state.computations with
 	| [] ->
+		(* If there aren't any computations, and also nothing is blocked, then program has 
+			terminated normally. *)
 		if RuntimeNameMap.is_empty state.blocked then
 			None
 		else
+		(* If things are blocked, we have a deadlock. *)
 			runtime_error "No runnable computations remain (deadlock or blocked system)"
 	| current :: rest ->
 		let pos = WithPos.pos current.current_comp in
@@ -475,18 +495,22 @@ let step_current state =
 			match WithPos.node current.current_comp with
 			| Ir.Annotate (comp, _) ->
 				finish_current { current with current_comp = comp }
+			(* Seq: install frame for comp2, evaluate comp1 *)
 			| Ir.Seq (comp1, comp2) ->
 				let next_current =
 					{ current with current_comp = comp1 }
 					|> install_seq_frame current.env comp2
 				in
 				finish_current next_current
+			(* Let: install frame for env/binder/cont, evaluate subject *)
 			| Ir.Let { binder; term; cont } ->
 				let next_current =
 					{ current with current_comp = term }
 					|> install_let_frame (Ir.Var.of_binder binder) current.env cont
 				in
 				finish_current next_current
+			(* Return: subcomputation has finished. Inspect stack; if there's a continuation
+				  then evaluate that, otherwise the thread's finished. *)
 			| Ir.Return value ->
 				let forced = force_value current.env value in
 				begin
@@ -494,6 +518,8 @@ let step_current state =
 					| Some resumed -> finish_current resumed
 					| None -> Some (inc_step { state with computations = rest })
 				end
+			(* App: Check whether applying a primitive or variable. If a primitive, handle separately.
+				 If a variable, looks up in declarations; if a primitive, handles directly *)
 			| Ir.App { func; args } ->
 				let func = normalise_function_value current.env func in
 				let args = List.map (force_value current.env) args in
@@ -556,35 +582,43 @@ let step_current state =
 						(Format.asprintf "Expected list value for case-list analysis, got: %a" Ir.pp_value (force_value current.env term))
 				end
 			| Ir.Dup vars ->
-				let mailboxes = apply_refcount_delta current.env state.mailboxes vars 1 in
-				finish_current_with_mailboxes { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } mailboxes
+				let (mailboxes, _) = apply_refcount_delta current.env state.mailboxes vars 1 in
+				finish_current_with_mailboxes { current with current_comp =
+					mk_comp ~pos (Ir.Return (unit_value ~pos ())) } mailboxes
 			| Ir.Drop vars ->
-				let mailboxes = apply_refcount_delta current.env state.mailboxes vars (-1) in
-				finish_current_with_mailboxes { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } mailboxes
-			| Ir.New _interface_name ->
+				(* After doing the reference updates, we might have some blocked processes that we can awake,
+				   due to Empty references becoming fireable *)
+				let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars (-1) in
+				let (blocked, computations) = enqueue_unblocked_many state.blocked state.computations to_wake in
+				let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
+				Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
+			| Ir.New _ ->
 				let runtime_name = Ir.RuntimeName.make () in
 				let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
 				let return_name = mk_value ~pos (Ir.Name runtime_name) in
-				finish_current_with_mailboxes { current with current_comp = mk_comp ~pos (Ir.Return return_name) } mailboxes
+				finish_current_with_mailboxes { current with current_comp =
+					mk_comp ~pos (Ir.Return return_name) } mailboxes
 			| Ir.Send { target; message; iname = _ } ->
 				let target_var = variable_name_from_target target in
 				let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
 				let message = (fst message, List.map (force_value current.env) (snd message)) in
 				begin
 					match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-				| None ->
-					runtime_error
-						(Format.asprintf "Send target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
-				| Some (refcount, messages) ->
-					let next_refcount = refcount - 1 in
-					if next_refcount < 0 then
-						runtime_error
-							(Format.asprintf "Mailbox %a reference count became negative after send: %a"
-								Ir.RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
-						let mailboxes = RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes in
-						let blocked, computations_tail = enqueue_unblocked state.blocked rest runtime_name in
-						let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
-						Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
+						| None ->
+							runtime_error
+								(Format.asprintf "Send target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
+						| Some (refcount, messages) ->
+							let next_refcount = refcount - 1 in
+							if next_refcount < 0 then
+								runtime_error
+									(Format.asprintf "Mailbox %a reference count became negative after send: %a"
+										Ir.RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
+								let mailboxes =
+									RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes
+								in
+								let blocked, computations_tail = enqueue_unblocked state.blocked rest runtime_name in
+								let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
+								Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
 				end
 			| Ir.Guard { target; pattern = _; guards; iname = _ } ->
 				let target_var = variable_name_from_target target in
@@ -594,9 +628,9 @@ let step_current state =
 				| None ->
 					runtime_error
 						(Format.asprintf "Guard target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
-					| Some (refcount, messages) ->
+					| Some ((refcount, _) as mailbox) ->
 						begin
-							match evaluate_guard runtime_name current.env guards messages with
+							match evaluate_guard runtime_name current.env guards mailbox with
 							| Some { next_env; next_comp; remaining_messages } ->
 								let mailboxes = RuntimeNameMap.add runtime_name (refcount, remaining_messages) state.mailboxes in
 								let current' = { current with current_comp = next_comp; env = next_env } in
@@ -632,11 +666,15 @@ let step_current state =
 				Some (inc_step { state with computations = current' :: (rest @ [spawned]) })
 		end
 
-let step_if_running_or_finished state =
+let step state =
 	if is_finished state then
 		Finished
 	else
-		let state = schedule_if_needed state in
+		let state =
+			if state.step_count > max_steps_before_yield then
+				{ state with step_count = 0; computations = rotate_computations state.computations }
+			else state
+		in
 		match step_current state with
 		| None -> Finished
 		| Some stepped -> Stepped stepped
@@ -647,13 +685,15 @@ let initial_state program =
 		| None -> []
 		| Some comp -> [{ current_comp = comp; env = VarMap.empty; stack = [] }]
 	in
-	{ program; step_count = 0; computations; blocked = RuntimeNameMap.empty; mailboxes = RuntimeNameMap.empty }
+	{ program; step_count = 0; computations; blocked = RuntimeNameMap.empty;
+		mailboxes = RuntimeNameMap.empty }
 
 let rec run_until_finished state =
-	match step_if_running_or_finished state with
+	match step state with
 	| Finished -> state
 	| Stepped state' -> run_until_finished state'
 
 let run_to_completion program =
+	Random.self_init ();
 	run_until_finished (initial_state program)
 

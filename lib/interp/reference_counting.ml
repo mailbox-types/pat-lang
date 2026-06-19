@@ -243,7 +243,21 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
         | New interface -> (* DONE *)
             wrap (New interface)
         | Spawn e -> (* DONE *)
-            wrap (Spawn (irc borrowed owned e))
+            (* This is an interesting one. We need any reference counting that's done inside the expression
+               to happen in the parent thread, **not** the spawned thread. 
+               I am trying this with a basic pattern match to rewire but will change if it needs to be more robust. *)
+            let counted_body = irc borrowed owned e in
+            let unchanged = wrap (Spawn counted_body) in
+            begin
+                match WithPos.node counted_body with
+                    | Seq (e1, e2) ->
+                        begin match WithPos.node e1 with
+                            | Dup dups ->
+                                wrap (Seq (wrap <| Dup dups, wrap <| Spawn e2))
+                            | _ -> unchanged
+                        end
+                    | _ -> unchanged
+            end
         | Send { target; message = (tag, message_values); iname } -> 
             begin
                 match transform_val_sequence decls borrowed owned (target :: message_values) with

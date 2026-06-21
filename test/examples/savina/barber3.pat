@@ -158,3 +158,4 @@ def main(): Unit {
     spawn { customer(cust3, waitingRoom) }
 }
 
+main()

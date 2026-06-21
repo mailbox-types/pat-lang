@@ -2,15 +2,6 @@ open Common
 open Source_code
 open Util.Utility
 
-(* TODO: Current issue with reference counts going negative when waking blocked empty guards.
-In reality we should change things:
-  * Empty guards should only be fireable when the reference count is *zero*. 
-	* Guarding on a mailbox, much like sending on a mailbox, should consume a reference.
-	* Evaluating a receive guard should introduce a reference.
-This alone probably won't solve the issue but gives us a better base to work off.
-*)
-
-
 let max_steps_before_yield = 20
 
 module VarOrd = struct
@@ -162,13 +153,13 @@ let apply_refcount_delta env mailboxes vars sign =
                     | Some (refcount, messages) ->
                         let next_refcount = refcount + (sign * count) in
 												let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
-                        if next_refcount < 0 then
+                        if next_refcount <= 0 then
                             runtime_error
-                                (Format.asprintf "Mailbox %a reference count became negative: %a"
+                                (Format.asprintf "Mailbox %a reference count became below-zero: %a"
                                     Ir.RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
 												(* If the next reference count is 1, then we will need to wake any threads blocked
 												   waiting for this mailbox. *)
-												else if next_refcount = 0 then
+												else if next_refcount = 1 then
 													(next_acc, mb :: to_wake)
 												else
 													(next_acc, to_wake)
@@ -589,7 +580,7 @@ let step_current state =
 				(* After doing the reference updates, we might have some blocked processes that we can awake,
 				   due to Empty references becoming fireable *)
 				let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars (-1) in
-				let (blocked, computations) = enqueue_unblocked_many state.blocked state.computations to_wake in
+				let (blocked, computations) = enqueue_unblocked_many state.blocked rest to_wake in
 				let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
 				Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
 			| Ir.New _ ->
@@ -625,14 +616,16 @@ let step_current state =
 				let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
 				begin
 					match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-				| None ->
-					runtime_error
-						(Format.asprintf "Guard target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
+					| None ->
+						runtime_error
+							(Format.asprintf "Guard target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
 					| Some ((refcount, _) as mailbox) ->
 						begin
 							match evaluate_guard runtime_name current.env guards mailbox with
 							| Some { next_env; next_comp; remaining_messages } ->
-								let mailboxes = RuntimeNameMap.add runtime_name (refcount, remaining_messages) state.mailboxes in
+								let mailboxes =
+									RuntimeNameMap.add runtime_name (refcount, remaining_messages) state.mailboxes
+								in
 								let current' = { current with current_comp = next_comp; env = next_env } in
 								Some (inc_step { state with computations = current' :: rest; mailboxes })
 							| None ->

@@ -208,20 +208,6 @@ let rec bind_many env binders values =
     bind_many (VarMap.add (Ir.Var.of_binder binder) value env) binders values
   | _ -> runtime_error "Arity mismatch while binding values"
 
-type guard_transition = {
-  next_env: environment;
-  next_comp: Ir.comp;
-  remaining_messages: Ir.message list;
-}
-
-type receive_guard_match = {
-  payload_binders: Ir.Binder.t list;
-  payloads: value list;
-  mailbox_binder: Ir.Binder.t;
-  cont: Ir.comp;
-  remaining_messages: Ir.message list;
-}
-
 let rec find_empty_guard guards =
   match guards with
   | [] -> None
@@ -238,12 +224,12 @@ let rec find_receive_guard guards messages =
   | guard :: rest ->
     begin
       match WithPos.node guard with
-      | Ir.Receive { tag; payload_binders; mailbox_binder; strategy = _; cont } ->
+      | Ir.Receive recv_guard ->
         begin
-          match remove_first_tagged_message tag messages with
+          match remove_first_tagged_message recv_guard.tag messages with
           | None -> find_receive_guard rest messages
           | Some (payloads, remaining_messages) ->
-            Some { payload_binders; payloads; mailbox_binder; cont; remaining_messages }
+            Some (recv_guard, payloads, remaining_messages)
         end
       | _ -> find_receive_guard rest messages
     end
@@ -259,22 +245,22 @@ let evaluate_guard runtime_name env guards mailbox =
       | (1, Some (mailbox_binder, cont)) ->
         let mailbox_value = mk_value (Ir.Name runtime_name) in
         let next_env = VarMap.add (Ir.Var.of_binder mailbox_binder) mailbox_value env in
-        Some { next_env; next_comp = cont; remaining_messages = messages }
+        Some (next_env, cont, messages) 
       | _ -> None
     end
   | _ ->
     begin
       match find_receive_guard guards messages with
       | None -> None
-      | Some { payload_binders; payloads; mailbox_binder; cont; remaining_messages } ->
-        if List.length payload_binders <> List.length payloads then
+      | Some (recv_guard, payloads, remaining_messages) ->
+        if List.length recv_guard.payload_binders <> List.length payloads then
           runtime_error "Receive payload arity mismatch";
         let mailbox_value = mk_value (Ir.Name runtime_name) in
         let next_env =
-          bind_many env payload_binders payloads
-          |> VarMap.add (Ir.Var.of_binder mailbox_binder) mailbox_value
+          bind_many env recv_guard.payload_binders payloads
+          |> VarMap.add (Ir.Var.of_binder recv_guard.mailbox_binder) mailbox_value
         in
-        Some { next_env; next_comp = cont; remaining_messages }
+        Some (next_env, recv_guard.cont, remaining_messages) 
     end
 
 let bool_of_value env value =
@@ -622,7 +608,7 @@ let step_current state =
           | Some ((refcount, _) as mailbox) ->
             begin
               match evaluate_guard runtime_name current.env guards mailbox with
-              | Some { next_env; next_comp; remaining_messages } ->
+              | Some (next_env, next_comp, remaining_messages) ->
                 let mailboxes =
                   RuntimeNameMap.add runtime_name (refcount, remaining_messages) state.mailboxes
                 in

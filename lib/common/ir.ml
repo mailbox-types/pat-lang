@@ -175,14 +175,15 @@ and atom_name = string
 and constant =
     [%import: Common_types.Constant.t]
 and guard = (guard_node WithPos.t [@name "withP"])
-and guard_node =
-    | Receive of {
+and receive_guard = {
         tag: string;
         payload_binders: (Binder.t[@name "binder"]) list;
         mailbox_binder: (Binder.t[@name "binder"]);
         strategy: Settings.ReceiveTypingStrategy.t option;
         cont: comp
     }
+and guard_node =
+    | Receive of receive_guard
     | Empty of ((Binder.t[@name "binder"]) * comp)
     | Fail
     [@@deriving visitors {

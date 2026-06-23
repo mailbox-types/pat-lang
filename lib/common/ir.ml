@@ -2,7 +2,6 @@
 open Common_types
 open Format
 open Util.Utility
-open Source_code
 
 module Binder = struct
     type t = { id: int; name: string }
@@ -84,13 +83,43 @@ module Var = struct
         compare (unique_name x1) (unique_name x2)
 end
 
+(*
 module type VarSet = (Set.S with type elt = Var.t)
-module VarSet = Set.Make(Var)
+*)
+module VarSet = struct
+    include Set.Make(Var) 
+    let union_many vs = List.fold_left (union) empty vs
+    let remove_many set vs = diff set (of_list vs)
+    let pp ppf varset =
+        Format.fprintf ppf "{%a}" (pp_print_comma_list Var.pp) (elements varset)
+end 
 type varset = VarSet.t
 
+(* It is useful to keep track of metadata associated with each IR node.
+This includes both source positions (for diagnostics) and free variables
+(for reference counting and eventually cancellation). *)
+module WithIrMetadata = struct
+  type 'a t = { node : 'a
+              ; pos  : (Source_code.Position.t[@opaque])
+              ; fvs  : (varset[@opaque])
+              } 
+            [@@name "withIR"]
+            [@@deriving visitors { variety = "map"; polymorphic = true}]
+            
+    let make ?(pos = Source_code.Position.dummy) ?(fvs = VarSet.empty) node = { node; pos; fvs }
+  let node t = t.node
+  let pos t = t.pos
+  let fvs t = t.fvs
+
+    let pp pp_node ppf { node; pos; fvs } =
+        Format.fprintf ppf "%a @ %a with FVs ({%a})" pp_node node Source_code.Position.pp pos VarSet.pp fvs
+
+end
+
+
 type program = {
-    prog_interfaces: ((Interface.t[@name "interface"]) WithPos.t [@name "withP"]) list;
-    prog_decls: (decl WithPos.t [@name "withP"]) list;
+    prog_interfaces: (Interface.t[@name "interface"]) list;
+    prog_decls: decl list;
     prog_body: comp option
 }
 and decl = {
@@ -99,7 +128,7 @@ and decl = {
     decl_return_type: (Type.t[@name "ty"]);
     decl_body: comp
 }
-and comp = (comp_node WithPos.t [@name "withP"])
+and comp = (comp_node WithIrMetadata.t [@name "withIR"])
 and comp_node =
     | Annotate of comp * (Type.t[@name "ty"])
     | Let of {
@@ -149,7 +178,7 @@ and comp_node =
     (* Reference counting instructions inserted after typechecking *)
     | Drop of ((Var.t[@name "var"]) * int) list
     | Dup of ((Var.t[@name "var"]) * int) list
-and value = (value_node WithPos.t [@name "withP"])
+and value = (value_node WithIrMetadata.t [@name "withIR"])
 and value_node =
     | VAnnotate of value * (Type.t[@name "ty"])
     | Atom of atom_name
@@ -174,7 +203,7 @@ and primitive_name = string
 and atom_name = string
 and constant =
     [%import: Common_types.Constant.t]
-and guard = (guard_node WithPos.t [@name "withP"])
+and guard = (guard_node WithIrMetadata.t [@name "withIR"])
 and receive_guard = {
         tag: string;
         payload_binders: (Binder.t[@name "binder"]) list;
@@ -190,143 +219,35 @@ and guard_node =
         variety = "map";
         ancestors = [
             "Type.map"; "Pretype.map"; "Binder.map";
-            "RuntimeName.map"; "Interface.map"; "Var.map"; "WithPos.map"];
+            "RuntimeName.map"; "Interface.map"; "Var.map"; "WithIrMetadata.map"];
         data = false }]
-
-
-let remove_decl_names (decls : Binder.t list) (vars : VarSet.t) : VarSet.t =
-    let decl_vars =
-        decls
-        |> List.map Var.of_binder
-        |> VarSet.of_list
-    in
-    VarSet.diff vars decl_vars
-
-let rec free_variables ?(decls = []) comp : VarSet.t =
-    let union_many = List.fold_left VarSet.union VarSet.empty in
-    let delete_binders binders vars =
-        List.fold_left (fun acc binder -> VarSet.remove (Var.of_binder binder) acc) vars binders
-    in
-    let vars =
-        match WithPos.node comp with
-        | Annotate (comp, _) ->
-            free_variables ~decls comp
-        | Let { binder; term; cont } ->
-            VarSet.union
-                (free_variables ~decls term)
-                (VarSet.remove (Var.of_binder binder) (free_variables ~decls cont))
-        | Seq (comp1, comp2) ->
-            VarSet.union (free_variables ~decls comp1) (free_variables ~decls comp2)
-        | Return value ->
-            free_variables_value ~decls value
-        | App { func; args } ->
-            union_many (free_variables_value ~decls func :: List.map (free_variables_value ~decls) args)
-        | If { test; then_expr; else_expr } ->
-            union_many [free_variables_value ~decls test; free_variables ~decls then_expr; free_variables ~decls else_expr]
-        | LetTuple { binders; tuple; cont } ->
-            let tuple_vars = free_variables_value ~decls tuple in
-            let cont_vars =
-                binders
-                |> List.map fst
-                |> fun binders -> delete_binders binders (free_variables ~decls cont)
-            in
-            VarSet.union tuple_vars cont_vars
-        | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
-            union_many
-                [ free_variables_value ~decls term
-                ; VarSet.remove (Var.of_binder binder1) (free_variables ~decls comp1)
-                ; VarSet.remove (Var.of_binder binder2) (free_variables ~decls comp2)
-                ]
-        | CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
-            union_many
-                [ free_variables_value ~decls term
-                ; free_variables ~decls nil
-                ; free_variables ~decls comp |> VarSet.remove (Var.of_binder binder1) |> VarSet.remove (Var.of_binder binder2)
-                ]
-        | New _ ->
-            VarSet.empty
-        | Spawn comp ->
-            free_variables ~decls comp
-        | Send { target; message = (_, values); iname = _ } ->
-            union_many (free_variables_value ~decls target :: List.map (free_variables_value ~decls) values)
-        | Free (value, _) ->
-            free_variables_value ~decls value
-        | Guard { target; pattern = _; guards; iname = _ } ->
-            union_many (free_variables_value ~decls target :: List.map (free_variables_guard ~decls) guards)
-        | Drop vars
-        | Dup vars ->
-            List.fold_left (fun acc (var, _) -> VarSet.add var acc) VarSet.empty vars
-    in
-    remove_decl_names decls vars
-and free_variables_value ?(decls = []) value : VarSet.t =
-    let union_many = List.fold_left VarSet.union VarSet.empty in
-    let vars =
-        match WithPos.node value with
-        | VAnnotate (value, _) ->
-            free_variables_value ~decls value
-        | Atom _
-        | Constant _
-        | Primitive _
-        | Name _
-        | Nil ->
-            VarSet.empty
-        | Variable (var, _) ->
-            VarSet.singleton var
-        | Tuple values ->
-            union_many (List.map (free_variables_value ~decls) values)
-        | Cons (value1, value2) ->
-            VarSet.union (free_variables_value ~decls value1) (free_variables_value ~decls value2)
-        | Inl value
-        | Inr value ->
-            free_variables_value ~decls value
-        | Lam { linear = _; parameters; result_type = _; body } ->
-            let body_vars = free_variables ~decls body in
-            parameters
-            |> List.map fst
-            |> List.fold_left (fun acc binder -> VarSet.remove (Var.of_binder binder) acc) body_vars
-    in
-    remove_decl_names decls vars
-and free_variables_guard ?(decls = []) guard : VarSet.t =
-    let vars =
-        match WithPos.node guard with
-        | Receive { tag = _; payload_binders; mailbox_binder; strategy = _; cont } ->
-            List.fold_left
-                (fun acc binder -> VarSet.remove (Var.of_binder binder) acc)
-                (free_variables ~decls cont)
-                (mailbox_binder :: payload_binders)
-        | Empty (binder, comp) ->
-            VarSet.remove (Var.of_binder binder) (free_variables ~decls comp)
-        | Fail ->
-            VarSet.empty
-    in
-    remove_decl_names decls vars
 
 let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
     if List.is_empty dups then
         comp
     else
-        let pos = WithPos.pos comp in
-        WithPos.make ~pos (Seq (WithPos.make (Dup dups), comp))
+        let fvs = WithIrMetadata.fvs comp in
+        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Dup dups), comp))
 
 let insert_drop (drops : (Var.t * int) list) (comp : comp) : comp =
     if List.is_empty drops then
         comp
     else
-        let pos = WithPos.pos comp in
-        WithPos.make ~pos (Seq (WithPos.make (Drop drops), comp))
+        let fvs = WithIrMetadata.fvs comp in
+        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop drops), comp))
 
 
 let normalise_seq comp =
     let right_nest_seq c =
         let rec mk_right_nested left right =
-            match WithPos.node left with
+            match WithIrMetadata.node left with
             | Seq (a, b) ->
-                let right' = WithPos.make ~pos:(WithPos.pos right) (Seq (b, right)) in
+                let right' = WithIrMetadata.make ~fvs:(WithIrMetadata.fvs right) (Seq (b, right)) in
                 mk_right_nested a right'
             | _ ->
-                WithPos.make ~pos:(WithPos.pos c) (Seq (left, right))
+                WithIrMetadata.make ~fvs:(WithIrMetadata.fvs c) (Seq (left, right))
         in
-        match WithPos.node c with
+        match WithIrMetadata.node c with
         | Seq (c1, c2) -> mk_right_nested c1 c2
         | _ -> c
     in
@@ -356,13 +277,12 @@ and pp_interface ppf iface =
         fprintf ppf "%s(%a)" tag
         (pp_print_comma_list Type.pp) tys
     in
-    let xs = Interface.bindings (WithPos.node iface) in
+    let xs = Interface.bindings iface in
     fprintf ppf "interface %s { %a }"
-        (Interface.name (WithPos.node iface))
+        (Interface.name iface)
         (pp_print_comma_list pp_msg_ty) xs
 (* Declarations *)
-and pp_decl ppf decl_with_pos =
-    let { WithPos.node = { decl_name; decl_parameters; decl_return_type; decl_body }; _ } = decl_with_pos in
+and pp_decl ppf { decl_name; decl_parameters; decl_return_type; decl_body } =
     fprintf ppf "def %a(%a): %a {@,@[<v 2>  %a@]@,}"
         Binder.pp decl_name
         (pp_print_comma_list pp_param) decl_parameters
@@ -393,7 +313,7 @@ and pp_cons name ppf ((bnd1, bnd2), c) =
         pp_comp c
 (* Expressions *)
 and pp_comp ppf comp_with_pos =
-    let comp_node = WithPos.node comp_with_pos in
+    let comp_node = WithIrMetadata.node comp_with_pos in
     match comp_node with
     | Annotate (c, ty) ->
         fprintf ppf "(%a : %a)" pp_comp c Type.pp ty
@@ -422,7 +342,7 @@ and pp_comp ppf comp_with_pos =
         (* Special-case the common case of sending to a variable.
            Bracket the rest for readability. *)
         begin
-            match WithPos.node target with
+            match WithIrMetadata.node target with
                 | Variable _ ->
                     fprintf ppf "%a ! %a"
                         pp_value target
@@ -466,7 +386,7 @@ and pp_comp ppf comp_with_pos =
         fprintf ppf "dup (%a)"
             (pp_print_comma_list pp_var) vars
 and pp_value ppf v =
-    let value = WithPos.node v in
+    let value = WithIrMetadata.node v in
     match value with
     (* Might want, at some stage, to print out pretype info *)
     | VAnnotate (value, ty) ->
@@ -491,7 +411,7 @@ and pp_value ppf v =
             Type.pp result_type
             pp_comp body
 and pp_guard ppf guard_with_pos =
-    let guard_node = WithPos.node guard_with_pos in
+    let guard_node = WithIrMetadata.node guard_with_pos in
     match guard_node with
     | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
             let receive_keyword = match strategy with
@@ -520,7 +440,7 @@ let is_free_guard = function
     | _ -> false
 
 let is_fail_guard guard =
-    match WithPos.node guard with
+    match WithIrMetadata.node guard with
     | Fail -> true
     | _ -> false
 

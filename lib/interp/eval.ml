@@ -1,5 +1,5 @@
 open Common
-open Source_code
+open Common_types
 open Util.Utility
 
 let max_steps_before_yield = 20
@@ -12,6 +12,17 @@ end
 
 module VarMap = Map.Make(VarOrd)
 module RuntimeNameMap = Map.Make(Ir.RuntimeName)
+
+let get_node = Ir.WithIrMetadata.node
+let get_fvs = Ir.WithIrMetadata.fvs
+let with_val_fvs value = Ir.WithIrMetadata.make ~fvs:(get_fvs value)
+
+let unit_value = Ir.WithIrMetadata.make (Ir.Tuple [])
+let return_unit_value =
+	Ir.WithIrMetadata.make (Ir.Return (Ir.WithIrMetadata.make (Ir.Tuple [])))
+let mk_const c = Ir.WithIrMetadata.make (Ir.Constant c)
+let mk_name a = Ir.WithIrMetadata.make (Ir.Name a)
+
 
 (* Placeholder runtime values for the CEK machine skeleton. *)
 type value = Ir.value
@@ -41,7 +52,7 @@ type blocked_state = computation_state RuntimeNameMap.t
 type mailbox_state = mailbox_entry RuntimeNameMap.t
 
 type machine_state = {
-    program: Ir.program;
+  program: Ir.program;
   step_count: int;
   computations: computation_state list;
   blocked: blocked_state;
@@ -72,15 +83,6 @@ let pp_mailbox_entry ppf (refcount, messages) =
     (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ") pp_message)
     messages
 
-let mk_value ?(pos = Position.dummy) node =
-  WithPos.make ~pos node
-
-let mk_comp ?(pos = Position.dummy) node =
-  WithPos.make ~pos node
-
-let unit_value ?(pos = Position.dummy) () =
-  mk_value ~pos (Ir.Tuple [])
-
 let lookup_env env var =
   match VarMap.find_opt var env with
   | Some value -> value
@@ -88,13 +90,13 @@ let lookup_env env var =
     runtime_error (Format.asprintf "Unbound runtime variable %a" Ir.Var.pp var)
 
 let rec force_value env value =
-  match WithPos.node value with
+  match get_node value with
   | Ir.VAnnotate (v, _) -> force_value env v
   | Ir.Variable (var, _) -> force_value env (lookup_env env var)
   | _ -> value
 
 let rec normalise_function_value env value =
-  match WithPos.node value with
+  match get_node value with
   | Ir.VAnnotate (v, _) -> normalise_function_value env v
   | Ir.Variable (var, _) ->
     begin
@@ -106,14 +108,14 @@ let rec normalise_function_value env value =
 
 let runtime_name_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
+  match get_node forced with
   | Ir.Name runtime_name -> runtime_name
   | _ ->
     runtime_error
       (Format.asprintf "Expected a mailbox runtime name value, got: %a" Ir.pp_value forced)
 
 let variable_name_from_target target =
-  match WithPos.node target with
+  match get_node target with
   | Ir.Variable (var, _) -> var
   | _ ->
     runtime_error
@@ -132,8 +134,7 @@ let remove_first_tagged_message tag messages =
 
 let decl_map program =
   List.fold_left
-    (fun acc decl_with_pos ->
-      let decl = WithPos.node decl_with_pos in
+    (fun acc decl ->
       let var = Ir.Var.of_binder decl.Ir.decl_name in
       VarMap.add var decl acc)
     VarMap.empty
@@ -143,7 +144,7 @@ let apply_refcount_delta env mailboxes vars sign =
   List.fold_left
     (fun (mailboxes_acc, to_wake) (var, count) ->
       if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
-            match WithPos.node (lookup_env env var) with
+            match get_node (lookup_env env var) with
             | Ir.Name mb ->
                 begin
                     match RuntimeNameMap.find_opt mb mailboxes_acc with
@@ -213,7 +214,7 @@ let rec find_empty_guard guards =
   | [] -> None
   | guard :: rest ->
     begin
-      match WithPos.node guard with
+      match get_node guard with
       | Ir.Empty (mailbox_binder, cont) -> Some (mailbox_binder, cont)
       | _ -> find_empty_guard rest
     end
@@ -223,7 +224,7 @@ let rec find_receive_guard guards messages =
   | [] -> None
   | guard :: rest ->
     begin
-      match WithPos.node guard with
+      match get_node guard with
       | Ir.Receive recv_guard ->
         begin
           match remove_first_tagged_message recv_guard.tag messages with
@@ -243,7 +244,7 @@ let evaluate_guard runtime_name env guards mailbox =
     begin
       match (count, find_empty_guard guards) with
       | (1, Some (mailbox_binder, cont)) ->
-        let mailbox_value = mk_value (Ir.Name runtime_name) in
+        let mailbox_value = mk_name runtime_name in
         let next_env = VarMap.add (Ir.Var.of_binder mailbox_binder) mailbox_value env in
         Some (next_env, cont, messages) 
       | _ -> None
@@ -255,7 +256,7 @@ let evaluate_guard runtime_name env guards mailbox =
       | Some (recv_guard, payloads, remaining_messages) ->
         if List.length recv_guard.payload_binders <> List.length payloads then
           runtime_error "Receive payload arity mismatch";
-        let mailbox_value = mk_value (Ir.Name runtime_name) in
+        let mailbox_value = mk_name runtime_name in
         let next_env =
           bind_many env recv_guard.payload_binders payloads
           |> VarMap.add (Ir.Var.of_binder recv_guard.mailbox_binder) mailbox_value
@@ -265,15 +266,15 @@ let evaluate_guard runtime_name env guards mailbox =
 
 let bool_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
-  | Ir.Constant (Common_types.Constant.Bool b) -> b
+  match get_node forced with
+  | Ir.Constant (Constant.Bool b) -> b
   | _ ->
     runtime_error
       (Format.asprintf "Expected boolean test value, got: %a" Ir.pp_value forced)
 
 let tuple_values_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
+  match get_node forced with
   | Ir.Tuple values -> values
   | _ ->
     runtime_error
@@ -281,24 +282,24 @@ let tuple_values_of_value env value =
 
 let int_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
-  | Ir.Constant (Common_types.Constant.Int i) -> i
+  match get_node forced with
+  | Ir.Constant (Constant.Int i) -> i
   | _ ->
     runtime_error
       (Format.asprintf "Expected integer value, got: %a" Ir.pp_value forced)
 
 let string_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
-  | Ir.Constant (Common_types.Constant.String s) -> s
+  match get_node forced with
+  | Ir.Constant (Constant.String s) -> s
   | _ ->
     runtime_error
       (Format.asprintf "Expected string value, got: %a" Ir.pp_value forced)
 
 let bool_runtime_of_value env value =
   let forced = force_value env value in
-  match WithPos.node forced with
-  | Ir.Constant (Common_types.Constant.Bool b) -> b
+  match get_node forced with
+  | Ir.Constant (Constant.Bool b) -> b
   | _ ->
     runtime_error
       (Format.asprintf "Expected boolean value, got: %a" Ir.pp_value forced)
@@ -309,36 +310,36 @@ let expect_arity prim expected args =
     runtime_error
       (Printf.sprintf "Primitive '%s' expected %d arguments but got %d" prim expected actual)
 
-let int_const ?(pos = Position.dummy) i =
-  mk_value ~pos (Ir.Constant (Common_types.Constant.Int i))
+let int_const i =
+  mk_const (Constant.Int i)
 
-let bool_const ?(pos = Position.dummy) b =
-  mk_value ~pos (Ir.Constant (Common_types.Constant.Bool b))
+let bool_const b =
+  mk_const (Constant.Bool b)
 
-let string_const ?(pos = Position.dummy) s =
-  mk_value ~pos (Ir.Constant (Common_types.Constant.String s))
+let string_const s =
+  mk_const (Constant.String s)
 
-let apply_primitive prim env args pos =
+let apply_primitive prim env args =
   match prim with
   | "+" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const ~pos (int_of_value env x + int_of_value env y)
+      | [x; y] -> int_const (int_of_value env x + int_of_value env y)
       | _ -> assert false
     end
   | "-" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const ~pos (int_of_value env x - int_of_value env y)
+      | [x; y] -> int_const (int_of_value env x - int_of_value env y)
       | _ -> assert false
     end
   | "*" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const ~pos (int_of_value env x * int_of_value env y)
+      | [x; y] -> int_const (int_of_value env x * int_of_value env y)
       | _ -> assert false
     end
   | "/" ->
@@ -348,63 +349,63 @@ let apply_primitive prim env args pos =
       | [x; y] ->
         let denom = int_of_value env y in
         if denom = 0 then runtime_error "Division by zero in primitive '/'";
-        int_const ~pos (int_of_value env x / denom)
+        int_const (int_of_value env x / denom)
       | _ -> assert false
     end
   | "<" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x < int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x < int_of_value env y)
       | _ -> assert false
     end
   | "<=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x <= int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x <= int_of_value env y)
       | _ -> assert false
     end
   | ">" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x > int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x > int_of_value env y)
       | _ -> assert false
     end
   | ">=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x >= int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x >= int_of_value env y)
       | _ -> assert false
     end
   | "==" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x = int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x = int_of_value env y)
       | _ -> assert false
     end
   | "!=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (int_of_value env x <> int_of_value env y)
+      | [x; y] -> bool_const (int_of_value env x <> int_of_value env y)
       | _ -> assert false
     end
   | "&&" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (bool_runtime_of_value env x && bool_runtime_of_value env y)
+      | [x; y] -> bool_const (bool_runtime_of_value env x && bool_runtime_of_value env y)
       | _ -> assert false
     end
   | "||" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const ~pos (bool_runtime_of_value env x || bool_runtime_of_value env y)
+      | [x; y] -> bool_const (bool_runtime_of_value env x || bool_runtime_of_value env y)
       | _ -> assert false
     end
   | "print" ->
@@ -413,14 +414,14 @@ let apply_primitive prim env args pos =
       match args with
       | [x] ->
         print_endline (string_of_value env x);
-        unit_value ~pos ()
+        unit_value
       | _ -> assert false
     end
   | "concat" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> string_const ~pos (string_of_value env x ^ string_of_value env y)
+      | [x; y] -> string_const (string_of_value env x ^ string_of_value env y)
       | _ -> assert false
     end
   | "rand" ->
@@ -430,21 +431,21 @@ let apply_primitive prim env args pos =
       | [x] ->
         let bound = int_of_value env x in
         if bound <= 0 then runtime_error "Primitive 'rand' expects a positive integer bound";
-        int_const ~pos (Random.int bound)
+        int_const (Random.int bound)
       | _ -> assert false
     end
   | "randBool" ->
     expect_arity prim 0 args;
-    bool_const ~pos (Random.bool ())
+    bool_const (Random.bool ())
   | "sleep" ->
     expect_arity prim 1 args;
     (* Intentionally a no-op for now *)
-    unit_value ~pos ()
+    unit_value
   | "intToString" ->
     expect_arity prim 1 args;
     begin
       match args with
-      | [x] -> string_const ~pos (string_of_int (int_of_value env x))
+      | [x] -> string_const (string_of_int (int_of_value env x))
       | _ -> assert false
     end
   | _ ->
@@ -461,7 +462,6 @@ let step_current state =
     (* If things are blocked, we have a deadlock. *)
       runtime_error "No runnable computations remain (deadlock or blocked system)"
   | current :: rest ->
-    let pos = WithPos.pos current.current_comp in
     let finish_current next_current =
       Some (inc_step { state with computations = next_current :: rest })
     in
@@ -469,7 +469,7 @@ let step_current state =
       Some (inc_step { state with computations = next_current :: rest; mailboxes })
     in
     begin
-      match WithPos.node current.current_comp with
+      match get_node current.current_comp with
       | Ir.Annotate (comp, _) ->
         finish_current { current with current_comp = comp }
       (* Seq: install frame for comp2, evaluate comp1 *)
@@ -501,10 +501,10 @@ let step_current state =
         let func = normalise_function_value current.env func in
         let args = List.map (force_value current.env) args in
         begin
-          match WithPos.node func with
+          match get_node func with
           | Ir.Primitive prim ->
-            let result = apply_primitive prim current.env args pos in
-            finish_current { current with current_comp = mk_comp ~pos (Ir.Return result) }
+            let result = apply_primitive prim current.env args in
+            finish_current { current with current_comp = with_val_fvs result (Ir.Return result) }
           | Ir.Variable (var, _) ->
             let decls = decl_map state.program in
             begin
@@ -531,7 +531,7 @@ let step_current state =
         finish_current { current with current_comp = cont; env = env' }
       | Ir.Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
         begin
-          match WithPos.node (force_value current.env term) with
+          match get_node (force_value current.env term) with
           | Ir.Inl value ->
             let env' = VarMap.add (Ir.Var.of_binder binder1) value current.env in
             finish_current { current with current_comp = comp1; env = env' }
@@ -544,7 +544,7 @@ let step_current state =
         end
       | Ir.CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
         begin
-          match WithPos.node (force_value current.env term) with
+          match get_node (force_value current.env term) with
           | Ir.Nil ->
             finish_current { current with current_comp = nil }
           | Ir.Cons (head, tail) ->
@@ -560,21 +560,20 @@ let step_current state =
         end
       | Ir.Dup vars ->
         let (mailboxes, _) = apply_refcount_delta current.env state.mailboxes vars 1 in
-        finish_current_with_mailboxes { current with current_comp =
-          mk_comp ~pos (Ir.Return (unit_value ~pos ())) } mailboxes
+        finish_current_with_mailboxes { current with current_comp = return_unit_value } mailboxes
       | Ir.Drop vars ->
         (* After doing the reference updates, we might have some blocked processes that we can awake,
            due to Empty references becoming fireable *)
         let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars (-1) in
         let (blocked, computations) = enqueue_unblocked_many state.blocked rest to_wake in
-        let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
+        let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
       | Ir.New _ ->
         let runtime_name = Ir.RuntimeName.make () in
         let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
-        let return_name = mk_value ~pos (Ir.Name runtime_name) in
+        let return_name = mk_name runtime_name in
         finish_current_with_mailboxes { current with current_comp =
-          mk_comp ~pos (Ir.Return return_name) } mailboxes
+		  Ir.WithIrMetadata.make (Ir.Return return_name) } mailboxes
       | Ir.Send { target; message; iname = _ } ->
         let target_var = variable_name_from_target target in
         let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
@@ -594,7 +593,7 @@ let step_current state =
                   RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes
                 in
                 let blocked, computations_tail = enqueue_unblocked state.blocked rest runtime_name in
-                let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
+                let current' = { current with current_comp = return_unit_value } in
                 Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
         end
       | Ir.Guard { target; pattern = _; guards; iname = _ } ->
@@ -621,7 +620,7 @@ let step_current state =
         end
       | Ir.Free (target, _iname) ->
         let target_var =
-          match WithPos.node target with
+          match get_node target with
           | Ir.Variable (var, _) -> var
           | _ -> runtime_error "Free expects a variable mailbox target"
         in
@@ -630,7 +629,7 @@ let step_current state =
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
           | Some (1, []) ->
             let mailboxes = RuntimeNameMap.remove runtime_name state.mailboxes in
-            finish_current_with_mailboxes { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } mailboxes
+            finish_current_with_mailboxes { current with current_comp = return_unit_value } mailboxes
         | Some entry ->
           runtime_error
             (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
@@ -641,7 +640,7 @@ let step_current state =
         end
       | Ir.Spawn comp ->
         let spawned = { current_comp = comp; env = current.env; stack = [] } in
-        let current' = { current with current_comp = mk_comp ~pos (Ir.Return (unit_value ~pos ())) } in
+        let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: (rest @ [spawned]) })
     end
 

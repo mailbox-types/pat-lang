@@ -25,8 +25,8 @@ module IEnv = Interface_env
 let rec synthesise_val :
     IEnv.t -> Ty_env.t -> Ir.value -> Type.t * Ty_env.t * Constraint_set.t =
         fun ienv decl_env v ->
-    let pos = WithPos.pos v in
-    match WithPos.node v with
+    let pos = WithIrMetadata.pos v in
+    match WithIrMetadata.node v with
         | VAnnotate (v, ty) ->
             let (env, constrs) = check_val ienv decl_env v ty in
             ty, env, constrs
@@ -149,7 +149,7 @@ let rec synthesise_val :
 and check_val :
     IEnv.t -> Ty_env.t -> Ir.value -> Type.t -> Ty_env.t * Constraint_set.t =
         fun ienv decl_env v ty ->
-    let pos = WithPos.pos v in
+    let pos = WithIrMetadata.pos v in
     (* Checks consistency between a pretype annotation and the check type *)
     let rec check_pretype_consistency ty pty =
         let open Type in
@@ -171,7 +171,7 @@ and check_val :
                 check_pretype_consistency t pt
             | _, _ -> Gripers.pretype_consistency ty pty [pos]
     in
-    match WithPos.node v with
+    match WithIrMetadata.node v with
         (* Crucial case: note that we are *checking* this variable's type, not
            synthesising! This is how we propagate the type information upwards.
            We check the interfaces, and then assign the type. *)
@@ -262,8 +262,8 @@ and synthesise_comp :
     IEnv.t -> Ty_env.t -> Ir.comp -> Type.t * Ty_env.t * Constraint_set.t =
         fun ienv decl_env e ->
     let synth = synthesise_comp ienv decl_env in
-    let pos = WithPos.pos e in
-    match (WithPos.node e) with
+    let pos = WithIrMetadata.pos e in
+    match (WithIrMetadata.node e) with
         | Annotate (e, ty) ->
             (* Mode switch: synthesis --> checking *)
             let env, constrs = check_comp ienv decl_env e ty in
@@ -447,15 +447,15 @@ and check_to_synth : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Const
         let synth_ty, synth_env, synth_constrs =
             synthesise_comp ienv decl_env e
         in
-        let subty_constrs = subtype ienv synth_ty check_ty (WithPos.pos e) in
+        let subty_constrs = subtype ienv synth_ty check_ty (WithIrMetadata.pos e) in
         synth_env, Constraint_set.union synth_constrs subty_constrs
 (* Checking mode *)
 and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constraint_set.t =
         fun ienv decl_env e ty ->
     let chk = check_comp ienv decl_env in
     let chkv = check_val ienv decl_env in
-    let pos = WithPos.pos e in
-    match (WithPos.node e) with
+    let pos = WithIrMetadata.pos e in
+    match (WithIrMetadata.node e) with
         | Return v -> check_val ienv decl_env v ty
         | Case { term; branch1 = ((bnd1, ty1), comp1); branch2 = ((bnd2, ty2), comp2) } ->
             let (term_env, term_constrs) =
@@ -785,8 +785,8 @@ and check_guards :
           (* Do a duplication check on guards *)
           let _ =
             List.fold_left (fun (empty, fail, tags) x ->
-              let pos = WithPos.pos x in
-              match WithPos.node x with
+                            let pos = WithIrMetadata.pos x in
+              match WithIrMetadata.node x with
                 | Empty _ ->
                     if empty then
                       Gripers.multiple_empty () [pos]
@@ -813,7 +813,7 @@ and check_guards :
               check_guard ienv decl_env iname guard_pat g ty
             in
             (* Calculate environment intersection *)
-            let (env, env_constrs) = Nullable_env.intersect g_env env (WithPos.pos g) in
+                        let (env, env_constrs) = Nullable_env.intersect g_env env (WithIrMetadata.pos g) in
             let constrs =
               Constraint_set.union_many
                 [g_constrs; env_constrs; acc_constrs] in
@@ -828,13 +828,13 @@ and check_guard :
         fun ienv decl_env iname pat g ty ->
           let open Ir in
           let open Type in
-          let pos = WithPos.pos g in
-          match (WithPos.node g) with
+                    let pos = WithIrMetadata.pos g in
+          match (WithIrMetadata.node g) with
             | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
                 let (env, cont_constrs) = check_comp ienv decl_env cont ty in
                 let payload_iface_tys =
                         let interface_withPos = IEnv.lookup iname ienv [pos] in
-                        Interface.lookup ~pos_list:[(WithPos.pos interface_withPos); pos] tag interface_withPos.node
+                                                Interface.lookup ~pos_list:[(WithPos.pos interface_withPos); pos] tag (WithPos.node interface_withPos)
                 in
                 (* Check that the received values have types consistent with the
                    interface annotations. *)
@@ -939,7 +939,7 @@ and check_guard :
    type for each declaration.
 *)
 let check_decls ienv decls =
-    let (decl_poses, decl_nodes) = WithPos.split_with_pos_list decls in
+    let decl_nodes = decls in
     (* List of allowed free names: all declaration names. Primitive names won't
      get added into the environment at all. *)
     let allowed_free_names =
@@ -971,7 +971,8 @@ let check_decls ienv decls =
        arguments are consistent with their annotations.
        Returns the inferred typing environment for the declaration (with
        arguments removed), along with generated constraints. *)
-    let check_decl d pos =
+    let check_decl d =
+        let pos = WithIrMetadata.pos d.decl_body in
         let (env, body_constrs) =
             check_comp ienv decl_env d.decl_body d.decl_return_type
         in
@@ -1003,7 +1004,7 @@ let check_decls ienv decls =
     in
 
     let decl_constrs =
-        List.map2 check_decl decl_nodes decl_poses
+        List.map check_decl decl_nodes
         |> Constraint_set.union_many
     in
     (* Finally, return reference environment and gathered constraints *)
@@ -1013,14 +1014,18 @@ let check_decls ienv decls =
 (* PRECONDITION: By now, annotation pass should have run, so each of the
    interfaces should be decorated with at least a pattern variable. *)
 let synthesise_program { prog_interfaces; prog_decls; prog_body } =
-    let ienv = IEnv.from_list prog_interfaces in
+    let ienv =
+        prog_interfaces
+        |> List.map (WithPos.make ~pos:Position.dummy)
+        |> IEnv.from_list
+    in
     let (decl_env, decl_constrs) = check_decls ienv prog_decls in
     (* If we have a body, synthesise type and combine environments.
        Otherwise, return unit and the decl env / constraints. *)
     match prog_body with
         | Some body ->
             let ty, body_env, body_constrs = synthesise_comp ienv decl_env body in
-            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithPos.pos body) in
+            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithIrMetadata.pos body) in
             let constrs =
                 Constraint_set.union_many
                     [decl_constrs; body_constrs; env_constrs]
@@ -1032,14 +1037,18 @@ let synthesise_program { prog_interfaces; prog_decls; prog_body } =
 (* Similar to the above, but checks the body type rather than
    synthesising it. *)
 let check_program { prog_interfaces; prog_decls; prog_body } ty =
-    let ienv = IEnv.from_list prog_interfaces in
+    let ienv =
+        prog_interfaces
+        |> List.map (WithPos.make ~pos:Position.dummy)
+        |> IEnv.from_list
+    in
     let (decl_env, decl_constrs) = check_decls ienv prog_decls in
     (* If we have a body, synthesise type and combine environments.
        Otherwise,  *)
     match prog_body with
         | Some body ->
             let body_env, body_constrs = check_comp ienv decl_env body ty in
-            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithPos.pos body) in
+            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithIrMetadata.pos body) in
             let constrs =
                 Constraint_set.union_many
                     [decl_constrs; body_constrs; env_constrs]

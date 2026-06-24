@@ -415,7 +415,7 @@ and transform_subterm
                 (* Return a 'let' expression with the binder, binding the computation,
                    and apply the continuation to the bound variable *)
                 (* WithPos.make ~pos (Ir.Let { binder = bnd; term = c; cont = (k env (wrap var')) })) *)
-                     WithIrMetadata.make ~pos ~fvs (Ir.Let {
+                WithIrMetadata.make ~pos ~fvs (Ir.Let {
                     binder = bnd;
                     term = c;
                     cont = cont' }))

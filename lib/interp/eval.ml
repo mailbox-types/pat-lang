@@ -43,7 +43,7 @@ type computation_frame =
 type computation_state = {
   current_comp: Ir.comp;
   env: environment;
-  stack: computation_frame list;
+  stack: computation_frame list
 }
 
 type mailbox_entry = int * Ir.message list
@@ -57,6 +57,7 @@ type machine_state = {
   computations: computation_state list;
   blocked: blocked_state;
   mailboxes: mailbox_state;
+  reference_counted_values: (int * value) RuntimeNameMap.t
 }
 
 type step_result =
@@ -663,8 +664,9 @@ let initial_state program =
     | None -> []
     | Some comp -> [{ current_comp = comp; env = VarMap.empty; stack = [] }]
   in
-  { program; step_count = 0; computations; blocked = RuntimeNameMap.empty;
-    mailboxes = RuntimeNameMap.empty }
+  { program; step_count = 0; computations;
+	blocked = RuntimeNameMap.empty; mailboxes = RuntimeNameMap.empty;
+	reference_counted_values = RuntimeNameMap.empty }
 
 let rec run_until_finished state =
   match step state with

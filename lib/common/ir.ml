@@ -386,7 +386,8 @@ and pp_comp ppf comp_with_pos =
         fprintf ppf "dup (%a)"
             (pp_print_comma_list pp_var) vars
 and pp_value ppf v =
-    let value = WithIrMetadata.node v in
+    pp_value_node ppf (WithIrMetadata.node v)
+and pp_value_node ppf value =
     match value with
     (* Might want, at some stage, to print out pretype info *)
     | VAnnotate (value, ty) ->

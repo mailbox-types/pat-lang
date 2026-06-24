@@ -1,58 +1,56 @@
 open Common
 open Common_types
 open Util.Utility
+open Ir
 
 let max_steps_before_yield = 20
 
 module VarOrd = struct
-  type t = Ir.Var.t
+  type t = Var.t
 
-  let compare = Ir.Var.compare
+  let compare = Var.compare
 end
 
 module VarMap = Map.Make(VarOrd)
-module RuntimeNameMap = Map.Make(Ir.RuntimeName)
+module RuntimeNameMap = Map.Make(RuntimeName)
 
-let get_node = Ir.WithIrMetadata.node
-let get_fvs = Ir.WithIrMetadata.fvs
-let with_val_fvs value = Ir.WithIrMetadata.make ~fvs:(get_fvs value)
+let get_node = WithIrMetadata.node
+let get_fvs = WithIrMetadata.fvs
+let with_val_fvs value = WithIrMetadata.make ~fvs:(get_fvs value)
 
-let unit_value = Ir.WithIrMetadata.make (Ir.Tuple [])
+let unit_value = WithIrMetadata.make (Tuple [])
 let return_unit_value =
-	Ir.WithIrMetadata.make (Ir.Return (Ir.WithIrMetadata.make (Ir.Tuple [])))
-let mk_const c = Ir.WithIrMetadata.make (Ir.Constant c)
-let mk_name a = Ir.WithIrMetadata.make (Ir.Name a)
+	WithIrMetadata.make (Return (WithIrMetadata.make (Tuple [])))
+let mk_const c = WithIrMetadata.make (Constant c)
+let mk_name a = WithIrMetadata.make (Name a)
 
-
-(* Placeholder runtime values for the CEK machine skeleton. *)
-type value = Ir.value
 
 type environment = value VarMap.t
 
 type computation_frame =
   | SeqFrame of {
     saved_env: environment;
-    next_comp: Ir.comp;
+    next_comp: comp;
   }
   | LetFrame of {
-    binder: Ir.Var.t;
+    binder: Var.t;
     saved_env: environment;
-    next_comp: Ir.comp;
+    next_comp: comp;
   }
 
 type computation_state = {
-  current_comp: Ir.comp;
+  current_comp: comp;
   env: environment;
   stack: computation_frame list
 }
 
-type mailbox_entry = int * Ir.message list
+type mailbox_entry = int * message list
 
 type blocked_state = computation_state RuntimeNameMap.t
 type mailbox_state = mailbox_entry RuntimeNameMap.t
 
 type machine_state = {
-  program: Ir.program;
+  program: program;
   step_count: int;
   computations: computation_state list;
   blocked: blocked_state;
@@ -77,7 +75,7 @@ let runtime_error message =
 let pp_mailbox_entry ppf (refcount, messages) =
   let pp_message ppf (tag, payloads) =
     Format.fprintf ppf "%s(%a)" tag
-      (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ") Ir.pp_value)
+      (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ") pp_value)
       payloads
   in
   Format.fprintf ppf "(refcount=%d, messages=[%a])" refcount
@@ -88,18 +86,18 @@ let lookup_env env var =
   match VarMap.find_opt var env with
   | Some value -> value
   | None ->
-    runtime_error (Format.asprintf "Unbound runtime variable %a" Ir.Var.pp var)
+    runtime_error (Format.asprintf "Unbound runtime variable %a" Var.pp var)
 
 let rec force_value env value =
   match get_node value with
-  | Ir.VAnnotate (v, _) -> force_value env v
-  | Ir.Variable (var, _) -> force_value env (lookup_env env var)
+  | VAnnotate (v, _) -> force_value env v
+  | Variable (var, _) -> force_value env (lookup_env env var)
   | _ -> value
 
 let rec normalise_function_value env value =
   match get_node value with
-  | Ir.VAnnotate (v, _) -> normalise_function_value env v
-  | Ir.Variable (var, _) ->
+  | VAnnotate (v, _) -> normalise_function_value env v
+  | Variable (var, _) ->
     begin
       match VarMap.find_opt var env with
       | Some bound -> force_value env bound
@@ -110,17 +108,17 @@ let rec normalise_function_value env value =
 let runtime_name_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Name runtime_name -> runtime_name
+  | Name runtime_name -> runtime_name
   | _ ->
     runtime_error
-      (Format.asprintf "Expected a mailbox runtime name value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected a mailbox runtime name value, got: %a" pp_value forced)
 
 let variable_name_from_target target =
   match get_node target with
-  | Ir.Variable (var, _) -> var
+  | Variable (var, _) -> var
   | _ ->
     runtime_error
-      (Format.asprintf "Expected target to be a variable, got: %a" Ir.pp_value target)
+      (Format.asprintf "Expected target to be a variable, got: %a" pp_value target)
 
 let remove_first_tagged_message tag messages =
   let rec aux prefix = function
@@ -136,29 +134,29 @@ let remove_first_tagged_message tag messages =
 let decl_map program =
   List.fold_left
     (fun acc decl ->
-      let var = Ir.Var.of_binder decl.Ir.decl_name in
+      let var = Var.of_binder decl.decl_name in
       VarMap.add var decl acc)
     VarMap.empty
-    program.Ir.prog_decls
+    program.prog_decls
 
 let apply_refcount_delta env mailboxes vars sign =
   List.fold_left
     (fun (mailboxes_acc, to_wake) (var, count) ->
       if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
             match get_node (lookup_env env var) with
-            | Ir.Name mb ->
+            | Name mb ->
                 begin
                     match RuntimeNameMap.find_opt mb mailboxes_acc with
                     | None ->
                         runtime_error
-                            (Format.asprintf "Mailbox %a missing during reference-count update" Ir.RuntimeName.pp mb)
+                            (Format.asprintf "Mailbox %a missing during reference-count update" RuntimeName.pp mb)
                     | Some (refcount, messages) ->
                         let next_refcount = refcount + (sign * count) in
                         let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
                         if next_refcount <= 0 then
                             runtime_error
                                 (Format.asprintf "Mailbox %a reference count became below-zero: %a"
-                                    Ir.RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
+                                    RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
                         (* If the next reference count is 1, then we will need to wake any threads blocked
                            waiting for this mailbox. *)
                         else if next_refcount = 1 then
@@ -186,7 +184,8 @@ let install_seq_frame saved_env next_comp current =
 let install_let_frame binder saved_env next_comp current =
   { current with stack = LetFrame { binder; saved_env; next_comp } :: current.stack }
 
-(* Handles a Return given the stack. Binds a value in a LetFrame, not in a SeqFrame *)
+(* Handles a Return given the stack. Binds a value in a LetFrame, not in a SeqFrame.*)
+  (*
 let pop_frame_with_value value current =
   match current.stack with
   | [] -> None
@@ -196,18 +195,52 @@ let pop_frame_with_value value current =
       | SeqFrame { saved_env; next_comp } ->
         Some { current_comp = next_comp; env = saved_env; stack = rest }
       | LetFrame { binder; saved_env; next_comp } ->
-        let env' = VarMap.add binder value saved_env in
-        Some { current_comp = next_comp; env = env'; stack = rest }
+        (* If we're returning a function or constructor, we need to generate a new 
+           function runtime name, store in the reference counted heap,
+           and return this instead of the lambda binding. *)
+        begin
+          match get_node value with
+            | Lam blah ->
+
+            | _ ->
+              let env' = VarMap.add binder value saved_env in
+              Some { current_comp = next_comp; env = env'; stack = rest }
+        end
     end
+  *)
 
 let inc_step state =
   { state with step_count = state.step_count + 1 }
+
+let handle_return value (current, rest) state =
+  let forced = force_value current.env value in
+  let update_computation comp = inc_step { state with computations = comp :: rest } in
+  match (get_node forced, current.stack) with
+    | (_, []) -> 
+      (* Nothing to return; thread terminated *)
+      inc_step { state with computations = rest }
+    | (_, SeqFrame { saved_env; next_comp } :: other_frames) ->
+      update_computation { current_comp = next_comp; env = saved_env; stack = other_frames }
+    | (Lam _, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
+      (* If we're returning a function or constructor, we need to generate a new 
+          function runtime name, store in the reference counted heap,
+          and return this instead of the lambda binding. *)
+      let new_ref = RuntimeName.make () in
+      let refc_val_map =
+        RuntimeNameMap.add new_ref (1, forced) state.reference_counted_values
+      in
+      let env' = VarMap.add binder (WithIrMetadata.make (Name new_ref)) saved_env in
+      let new_comp_state = { current_comp = next_comp; env = env'; stack = other_frames } in
+      inc_step { state with computations = new_comp_state :: rest; reference_counted_values = refc_val_map }
+    | (_, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
+      let env' = VarMap.add binder value saved_env in
+      update_computation { current_comp = next_comp; env = env'; stack = other_frames }
 
 let rec bind_many env binders values =
   match binders, values with
   | [], [] -> env
   | binder :: binders, value :: values ->
-    bind_many (VarMap.add (Ir.Var.of_binder binder) value env) binders values
+    bind_many (VarMap.add (Var.of_binder binder) value env) binders values
   | _ -> runtime_error "Arity mismatch while binding values"
 
 let rec find_empty_guard guards =
@@ -216,7 +249,7 @@ let rec find_empty_guard guards =
   | guard :: rest ->
     begin
       match get_node guard with
-      | Ir.Empty (mailbox_binder, cont) -> Some (mailbox_binder, cont)
+      | Empty (mailbox_binder, cont) -> Some (mailbox_binder, cont)
       | _ -> find_empty_guard rest
     end
 
@@ -226,7 +259,7 @@ let rec find_receive_guard guards messages =
   | guard :: rest ->
     begin
       match get_node guard with
-      | Ir.Receive recv_guard ->
+      | Receive recv_guard ->
         begin
           match remove_first_tagged_message recv_guard.tag messages with
           | None -> find_receive_guard rest messages
@@ -246,7 +279,7 @@ let evaluate_guard runtime_name env guards mailbox =
       match (count, find_empty_guard guards) with
       | (1, Some (mailbox_binder, cont)) ->
         let mailbox_value = mk_name runtime_name in
-        let next_env = VarMap.add (Ir.Var.of_binder mailbox_binder) mailbox_value env in
+        let next_env = VarMap.add (Var.of_binder mailbox_binder) mailbox_value env in
         Some (next_env, cont, messages) 
       | _ -> None
     end
@@ -260,7 +293,7 @@ let evaluate_guard runtime_name env guards mailbox =
         let mailbox_value = mk_name runtime_name in
         let next_env =
           bind_many env recv_guard.payload_binders payloads
-          |> VarMap.add (Ir.Var.of_binder recv_guard.mailbox_binder) mailbox_value
+          |> VarMap.add (Var.of_binder recv_guard.mailbox_binder) mailbox_value
         in
         Some (next_env, recv_guard.cont, remaining_messages) 
     end
@@ -268,42 +301,42 @@ let evaluate_guard runtime_name env guards mailbox =
 let bool_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Constant (Constant.Bool b) -> b
+  | Constant (Constant.Bool b) -> b
   | _ ->
     runtime_error
-      (Format.asprintf "Expected boolean test value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected boolean test value, got: %a" pp_value forced)
 
 let tuple_values_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Tuple values -> values
+  | Tuple values -> values
   | _ ->
     runtime_error
-      (Format.asprintf "Expected tuple value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected tuple value, got: %a" pp_value forced)
 
 let int_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Constant (Constant.Int i) -> i
+  | Constant (Constant.Int i) -> i
   | _ ->
     runtime_error
-      (Format.asprintf "Expected integer value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected integer value, got: %a" pp_value forced)
 
 let string_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Constant (Constant.String s) -> s
+  | Constant (Constant.String s) -> s
   | _ ->
     runtime_error
-      (Format.asprintf "Expected string value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected string value, got: %a" pp_value forced)
 
 let bool_runtime_of_value env value =
   let forced = force_value env value in
   match get_node forced with
-  | Ir.Constant (Constant.Bool b) -> b
+  | Constant (Constant.Bool b) -> b
   | _ ->
     runtime_error
-      (Format.asprintf "Expected boolean value, got: %a" Ir.pp_value forced)
+      (Format.asprintf "Expected boolean value, got: %a" pp_value forced)
 
 let expect_arity prim expected args =
   let actual = List.length args in
@@ -452,6 +485,20 @@ let apply_primitive prim env args =
   | _ ->
     runtime_error (Printf.sprintf "Unknown primitive '%s'" prim)
 
+let lookup_lambda name refcount_map =
+  match RuntimeNameMap.find_opt name refcount_map with
+    | Some (count, v) ->
+      begin
+        match get_node v with
+          | Lam { parameters; body; _} -> (count, WithIrMetadata.fvs v, parameters, body)
+          | bad -> 
+              runtime_error 
+                (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
+                  RuntimeName.pp name Ir.pp_value_node bad)
+      end
+    | None -> runtime_error
+      (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)
+
 let step_current state =
   match state.computations with
   | [] ->
@@ -471,42 +518,36 @@ let step_current state =
     in
     begin
       match get_node current.current_comp with
-      | Ir.Annotate (comp, _) ->
+      | Annotate (comp, _) ->
         finish_current { current with current_comp = comp }
       (* Seq: install frame for comp2, evaluate comp1 *)
-      | Ir.Seq (comp1, comp2) ->
+      | Seq (comp1, comp2) ->
         let next_current =
           { current with current_comp = comp1 }
           |> install_seq_frame current.env comp2
         in
         finish_current next_current
       (* Let: install frame for env/binder/cont, evaluate subject *)
-      | Ir.Let { binder; term; cont } ->
+      | Let { binder; term; cont } ->
         let next_current =
           { current with current_comp = term }
-          |> install_let_frame (Ir.Var.of_binder binder) current.env cont
+          |> install_let_frame (Var.of_binder binder) current.env cont
         in
         finish_current next_current
       (* Return: subcomputation has finished. Inspect stack; if there's a continuation
           then evaluate that, otherwise the thread's finished. *)
-      | Ir.Return value ->
-        let forced = force_value current.env value in
-        begin
-          match pop_frame_with_value forced current with
-          | Some resumed -> finish_current resumed
-          | None -> Some (inc_step { state with computations = rest })
-        end
+      | Return value -> Some (handle_return value (current, rest) state)
       (* App: Check whether applying a primitive or variable. If a primitive, handle separately.
          If a variable, looks up in declarations; if a primitive, handles directly *)
-      | Ir.App { func; args } ->
+      | App { func; args } ->
         let func = normalise_function_value current.env func in
         let args = List.map (force_value current.env) args in
         begin
           match get_node func with
-          | Ir.Primitive prim ->
+          | Primitive prim ->
             let result = apply_primitive prim current.env args in
-            finish_current { current with current_comp = with_val_fvs result (Ir.Return result) }
-          | Ir.Variable (var, _) ->
+            finish_current { current with current_comp = with_val_fvs result (Return result) }
+          | Variable (var, _) ->
             let decls = decl_map state.program in
             begin
               match VarMap.find_opt var decls with
@@ -516,66 +557,76 @@ let step_current state =
                 let call_env = bind_many VarMap.empty binders args in
                 finish_current { current with current_comp = decl.decl_body; env = call_env }
             end
+          | Lam _ -> failwith "TODO"
+          (* We've previously bound the function. Need to dup its FVs, drop a
+            ref, extend the env with param -> arg mappings, and eval body *) 
+          | Name name ->
+            let dup_cmd = failwith "TODO" in
+            let drop_cmd = failwith "TODO" in
+            let extended_env = failwith "TODO" in
+            let (count, fvs, params, body) = lookup_lambda name state.reference_counted_values in
+            let new_stack = failwith "TODO" in
+            finish_current { current with current_comp = dup_cmd; stack = new_stack }
           | _ -> runtime_error "Function position must be a declaration variable or primitive"
         end
-      | Ir.If { test; then_expr; else_expr } ->
+      | If { test; then_expr; else_expr } ->
         if bool_of_value current.env test then
           finish_current { current with current_comp = then_expr }
         else
           finish_current { current with current_comp = else_expr }
-      | Ir.LetTuple { binders; tuple; cont } ->
+      | LetTuple { binders; tuple; cont } ->
         let tuple_values = tuple_values_of_value current.env tuple in
         let tuple_binders = List.map fst binders in
         if List.length tuple_binders <> List.length tuple_values then
           runtime_error "Tuple arity mismatch in let-tuple";
         let env' = bind_many current.env tuple_binders tuple_values in
         finish_current { current with current_comp = cont; env = env' }
-      | Ir.Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
+      | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
         begin
           match get_node (force_value current.env term) with
-          | Ir.Inl value ->
-            let env' = VarMap.add (Ir.Var.of_binder binder1) value current.env in
+          | Inl value ->
+            let env' = VarMap.add (Var.of_binder binder1) value current.env in
             finish_current { current with current_comp = comp1; env = env' }
-          | Ir.Inr value ->
-            let env' = VarMap.add (Ir.Var.of_binder binder2) value current.env in
+          | Inr value ->
+            let env' = VarMap.add (Var.of_binder binder2) value current.env in
             finish_current { current with current_comp = comp2; env = env' }
           | _ ->
           runtime_error
-            (Format.asprintf "Expected sum value for case analysis, got: %a" Ir.pp_value (force_value current.env term))
+            (Format.asprintf "Expected sum value for case analysis, got: %a" pp_value (force_value current.env term))
         end
-      | Ir.CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
+      | CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
         begin
           match get_node (force_value current.env term) with
-          | Ir.Nil ->
+          | Nil ->
             finish_current { current with current_comp = nil }
-          | Ir.Cons (head, tail) ->
+          | Cons (head, tail) ->
             let env' =
               current.env
-              |> VarMap.add (Ir.Var.of_binder binder1) head
-              |> VarMap.add (Ir.Var.of_binder binder2) tail
+              |> VarMap.add (Var.of_binder binder1) head
+              |> VarMap.add (Var.of_binder binder2) tail
             in
             finish_current { current with current_comp = comp; env = env' }
           | _ ->
           runtime_error
-            (Format.asprintf "Expected list value for case-list analysis, got: %a" Ir.pp_value (force_value current.env term))
+            (Format.asprintf "Expected list value for case-list analysis, got: %a" pp_value (force_value current.env term))
         end
-      | Ir.Dup vars ->
+      | Dup vars ->
         let (mailboxes, _) = apply_refcount_delta current.env state.mailboxes vars 1 in
         finish_current_with_mailboxes { current with current_comp = return_unit_value } mailboxes
-      | Ir.Drop vars ->
+      | Drop vars ->
         (* After doing the reference updates, we might have some blocked processes that we can awake,
            due to Empty references becoming fireable *)
         let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars (-1) in
         let (blocked, computations) = enqueue_unblocked_many state.blocked rest to_wake in
         let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
-      | Ir.New _ ->
-        let runtime_name = Ir.RuntimeName.make () in
+      | New _ ->
+        let runtime_name = RuntimeName.make () in
         let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
         let return_name = mk_name runtime_name in
         finish_current_with_mailboxes { current with current_comp =
-		  Ir.WithIrMetadata.make (Ir.Return return_name) } mailboxes
-      | Ir.Send { target; message; iname = _ } ->
+        WithIrMetadata.make (Return return_name) } mailboxes
+      | Send { target; message; iname = _ } ->
         let target_var = variable_name_from_target target in
         let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
         let message = (fst message, List.map (force_value current.env) (snd message)) in
@@ -583,13 +634,13 @@ let step_current state =
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
             | None ->
               runtime_error
-                (Format.asprintf "Send target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
+                (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
             | Some (refcount, messages) ->
               let next_refcount = refcount - 1 in
               if next_refcount < 0 then
                 runtime_error
                   (Format.asprintf "Mailbox %a reference count became negative after send: %a"
-                    Ir.RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
+                    RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
                 let mailboxes =
                   RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes
                 in
@@ -597,14 +648,14 @@ let step_current state =
                 let current' = { current with current_comp = return_unit_value } in
                 Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
         end
-      | Ir.Guard { target; pattern = _; guards; iname = _ } ->
+      | Guard { target; pattern = _; guards; iname = _ } ->
         let target_var = variable_name_from_target target in
         let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
         begin
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
           | None ->
             runtime_error
-              (Format.asprintf "Guard target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
+              (Format.asprintf "Guard target mailbox %a does not exist" RuntimeName.pp runtime_name)
           | Some ((refcount, _) as mailbox) ->
             begin
               match evaluate_guard runtime_name current.env guards mailbox with
@@ -619,10 +670,10 @@ let step_current state =
                 Some { state with computations = rest; blocked; step_count = 0 }
             end
         end
-      | Ir.Free (target, _iname) ->
+      | Free (target, _iname) ->
         let target_var =
           match get_node target with
-          | Ir.Variable (var, _) -> var
+          | Variable (var, _) -> var
           | _ -> runtime_error "Free expects a variable mailbox target"
         in
         let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
@@ -634,12 +685,12 @@ let step_current state =
         | Some entry ->
           runtime_error
             (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
-              Ir.RuntimeName.pp runtime_name pp_mailbox_entry entry)
+              RuntimeName.pp runtime_name pp_mailbox_entry entry)
         | None ->
           runtime_error
-            (Format.asprintf "Free target mailbox %a does not exist" Ir.RuntimeName.pp runtime_name)
+            (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp runtime_name)
         end
-      | Ir.Spawn comp ->
+      | Spawn comp ->
         let spawned = { current_comp = comp; env = current.env; stack = [] } in
         let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: (rest @ [spawned]) })
@@ -660,7 +711,7 @@ let step state =
 
 let initial_state program =
   let computations =
-    match program.Ir.prog_body with
+    match program.prog_body with
     | None -> []
     | Some comp -> [{ current_comp = comp; env = VarMap.empty; stack = [] }]
   in

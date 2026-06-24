@@ -13,7 +13,7 @@ depends: [
   "visitors"
   "ppx_import"
   "z3"
-  "menhir" {>= "20180523"}
+  "menhir"
   "bag"
   "odoc" {with-doc}
 ]

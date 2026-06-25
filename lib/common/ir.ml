@@ -30,15 +30,23 @@ module Binder = struct
 end
 
 module RuntimeName = struct
-    type t = { id: int }
+    type t =
+        | MailboxName of int
+        | ValueName of int
     [@@name "runtime_name"]
     [@@deriving visitors { variety = "map"; data = false }]
 
     (* Accessors *)
-    let id x = x.id
+    let id = function
+        | MailboxName i
+        | ValueName i -> i
 
     let compare x1 x2 =
-        Int.compare x1.id x2.id
+        match (x1, x2) with
+        | (MailboxName i1, MailboxName i2)
+        | (ValueName i1, ValueName i2) -> Int.compare i1 i2
+        | (MailboxName _, ValueName _) -> -1
+        | (ValueName _, MailboxName _) -> 1
 
     let source = ref 0
 
@@ -47,12 +55,17 @@ module RuntimeName = struct
         incr source;
         res
 
-    let make () =
-        { id = gen () }
+    let make_mailbox () =
+        MailboxName (gen ())
+
+    let make_value () =
+        ValueName (gen ())
 
     (* Display *)
     let pp ppf x =
-        Format.pp_print_string ppf ("_" ^ (string_of_int x.id))
+        match x with
+        | MailboxName i -> Format.pp_print_string ppf ("m_" ^ string_of_int i)
+        | ValueName i -> Format.pp_print_string ppf ("v_" ^ string_of_int i)
 end
 
 module Var = struct
@@ -175,10 +188,19 @@ and comp_node =
         guards: guard list;
         iname: string option
       }
-    (* Reference counting instructions inserted after typechecking *)
-    | Drop of ((Var.t[@name "var"]) * int) list
+        (* Reference counting instructions inserted after typechecking *)
+        | Drop of {
+                vars: ((Var.t[@name "var"]) * int) list;
+                names: ((RuntimeName.t[@name "runtime_name"]) * int) list
+            }
     | Dup of ((Var.t[@name "var"]) * int) list
 and value = (value_node WithIrMetadata.t [@name "withIR"])
+and lambda = {
+    linear: bool;
+    parameters: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) list;
+    result_type: (Type.t[@name "ty"]);
+    body: comp
+}
 and value_node =
     | VAnnotate of value * (Type.t[@name "ty"])
     | Atom of atom_name
@@ -191,12 +213,7 @@ and value_node =
     | Cons of value * value
     | Inl of value
     | Inr of value
-    | Lam of {
-        linear: bool;
-        parameters: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) list;
-        result_type: (Type.t[@name "ty"]);
-        body: comp
-    }
+    | Lam of lambda
 and message = (string * value list)
     [@@name "msg"]
 and primitive_name = string
@@ -229,12 +246,12 @@ let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
         let fvs = WithIrMetadata.fvs comp in
         WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Dup dups), comp))
 
-let insert_drop (drops : (Var.t * int) list) (comp : comp) : comp =
-    if List.is_empty drops then
+let insert_drop ?(names = []) (drops : (Var.t * int) list) (comp : comp) : comp =
+    if List.is_empty drops && List.is_empty names then
         comp
     else
         let fvs = WithIrMetadata.fvs comp in
-        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop drops), comp))
+        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop { vars = drops; names }), comp))
 
 
 let normalise_seq comp =
@@ -377,10 +394,22 @@ and pp_comp ppf comp_with_pos =
             pp_value target
             Type.Pattern.pp pattern
             (pp_print_newline_list pp_guard) guards
-    | Drop vars ->
+    | Drop { vars; names } ->
         let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
-        fprintf ppf "drop (%a)"
-            (pp_print_comma_list pp_var) vars
+        let pp_name ppf (name, count) = fprintf ppf "\"%a\":%d" RuntimeName.pp name count in
+        begin
+            match (vars, names) with
+            | (_, []) ->
+                fprintf ppf "drop (%a)"
+                    (pp_print_comma_list pp_var) vars
+            | ([], _) ->
+                fprintf ppf "drop_names (%a)"
+                    (pp_print_comma_list pp_name) names
+            | _ ->
+                fprintf ppf "drop (vars=[%a], names=[%a])"
+                    (pp_print_comma_list pp_var) vars
+                    (pp_print_comma_list pp_name) names
+        end
     | Dup vars ->
         let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
         fprintf ppf "dup (%a)"
@@ -444,6 +473,7 @@ let is_fail_guard guard =
     match WithIrMetadata.node guard with
     | Fail -> true
     | _ -> false
+
 
 
 (* Substitutes a pattern solution through the program *)

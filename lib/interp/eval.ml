@@ -2,16 +2,11 @@ open Common
 open Common_types
 open Util.Utility
 open Ir
+open Runtime_common
 
 let max_steps_before_yield = 20
 
-module VarOrd = struct
-  type t = Var.t
-
-  let compare = Var.compare
-end
-
-module VarMap = Map.Make(VarOrd)
+module VarMap = Runtime_common.VarMap
 module RuntimeNameMap = Map.Make(RuntimeName)
 
 let get_node = WithIrMetadata.node
@@ -24,8 +19,10 @@ let return_unit_value =
 let mk_const c = WithIrMetadata.make (Constant c)
 let mk_name a = WithIrMetadata.make (Name a)
 
+let runtime_of_ir env value = RuntimeValue.of_ir env value
+let ir_of_runtime value = RuntimeValue.to_ir value
 
-type environment = value VarMap.t
+type environment = value_env
 
 type computation_frame =
   | SeqFrame of {
@@ -55,7 +52,7 @@ type machine_state = {
   computations: computation_state list;
   blocked: blocked_state;
   mailboxes: mailbox_state;
-  reference_counted_values: (int * value) RuntimeNameMap.t
+  reference_counted_values: (int * RuntimeValue.t) RuntimeNameMap.t
 }
 
 type step_result =
@@ -91,7 +88,7 @@ let lookup_env env var =
 let rec force_value env value =
   match get_node value with
   | VAnnotate (v, _) -> force_value env v
-  | Variable (var, _) -> force_value env (lookup_env env var)
+  | Variable (var, _) -> force_value env (ir_of_runtime (lookup_env env var))
   | _ -> value
 
 let rec normalise_function_value env value =
@@ -100,18 +97,18 @@ let rec normalise_function_value env value =
   | Variable (var, _) ->
     begin
       match VarMap.find_opt var env with
-      | Some bound -> force_value env bound
+      | Some bound -> force_value env (ir_of_runtime bound)
       | None -> value
     end
   | _ -> value
 
-let runtime_name_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Name runtime_name -> runtime_name
+let rec runtime_name_of_value value =
+  match value with
+  | RuntimeValue.VAnnotate (v, _) -> runtime_name_of_value v
+  | RuntimeValue.Name runtime_name -> runtime_name
   | _ ->
     runtime_error
-      (Format.asprintf "Expected a mailbox runtime name value, got: %a" pp_value forced)
+      (Format.asprintf "Expected a mailbox runtime name value, got: %a" pp_value (ir_of_runtime value))
 
 let variable_name_from_target target =
   match get_node target with
@@ -139,35 +136,47 @@ let decl_map program =
     VarMap.empty
     program.prog_decls
 
-let apply_refcount_delta env mailboxes vars sign =
+let update_mailbox_refcount mailboxes_acc to_wake mb count sign =
+  match RuntimeNameMap.find_opt mb mailboxes_acc with
+  | None ->
+    runtime_error
+      (Format.asprintf "Mailbox %a missing during reference-count update" RuntimeName.pp mb)
+  | Some (refcount, messages) ->
+    let next_refcount = refcount + (sign * count) in
+    let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
+    if next_refcount <= 0 then
+      runtime_error
+        (Format.asprintf "Mailbox %a reference count became below-zero: %a"
+          RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
+    else if next_refcount = 1 then
+      (next_acc, mb :: to_wake)
+    else
+      (next_acc, to_wake)
+
+let apply_refcount_delta env mailboxes vars names sign =
+  let open RuntimeName in
+  let (mailboxes_after_vars, to_wake_after_vars) =
   List.fold_left
     (fun (mailboxes_acc, to_wake) (var, count) ->
       if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
-            match get_node (lookup_env env var) with
-            | Name mb ->
-                begin
-                    match RuntimeNameMap.find_opt mb mailboxes_acc with
-                    | None ->
-                        runtime_error
-                            (Format.asprintf "Mailbox %a missing during reference-count update" RuntimeName.pp mb)
-                    | Some (refcount, messages) ->
-                        let next_refcount = refcount + (sign * count) in
-                        let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
-                        if next_refcount <= 0 then
-                            runtime_error
-                                (Format.asprintf "Mailbox %a reference count became below-zero: %a"
-                                    RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
-                        (* If the next reference count is 1, then we will need to wake any threads blocked
-                           waiting for this mailbox. *)
-                        else if next_refcount = 1 then
-                          (next_acc, mb :: to_wake)
-                        else
-                          (next_acc, to_wake)
-                end
-            | _ -> (mailboxes_acc, to_wake) (* Reference counting for other things is a no-op at present. *)
+        match get_node (ir_of_runtime (lookup_env env var)) with
+          | Name ((MailboxName _) as mb) ->
+            update_mailbox_refcount mailboxes_acc to_wake mb count sign
+          | Name (ValueName _) ->
+            (mailboxes_acc, to_wake)
+          | _ -> (mailboxes_acc, to_wake) (* Reference counting for other things is a no-op at present. *)
         )
     (mailboxes, [])
     vars
+  in
+  List.fold_left
+    (fun (mailboxes_acc, to_wake) (name, count) ->
+      if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
+      match name with
+      | RuntimeName.MailboxName _ -> update_mailbox_refcount mailboxes_acc to_wake name count sign
+      | RuntimeName.ValueName _ -> (mailboxes_acc, to_wake))
+    (mailboxes_after_vars, to_wake_after_vars)
+    names
 
 let enqueue_unblocked blocked computations runtime_name =
   match RuntimeNameMap.find_opt runtime_name blocked with
@@ -213,7 +222,9 @@ let inc_step state =
   { state with step_count = state.step_count + 1 }
 
 let handle_return value (current, rest) state =
+  (* We can only store a closed runtime value in the environment, so we need to substitute any FVs. *)
   let forced = force_value current.env value in
+  let irv = runtime_of_ir current.env value in
   let update_computation comp = inc_step { state with computations = comp :: rest } in
   match (get_node forced, current.stack) with
     | (_, []) -> 
@@ -225,22 +236,24 @@ let handle_return value (current, rest) state =
       (* If we're returning a function or constructor, we need to generate a new 
           function runtime name, store in the reference counted heap,
           and return this instead of the lambda binding. *)
-      let new_ref = RuntimeName.make () in
+      let new_ref = RuntimeName.make_value () in
       let refc_val_map =
-        RuntimeNameMap.add new_ref (1, forced) state.reference_counted_values
+        RuntimeNameMap.add new_ref (1, irv) state.reference_counted_values
       in
-      let env' = VarMap.add binder (WithIrMetadata.make (Name new_ref)) saved_env in
+      let env' =
+        VarMap.add binder (RuntimeValue.Name new_ref) saved_env
+      in
       let new_comp_state = { current_comp = next_comp; env = env'; stack = other_frames } in
       inc_step { state with computations = new_comp_state :: rest; reference_counted_values = refc_val_map }
     | (_, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
-      let env' = VarMap.add binder value saved_env in
+      let env' = VarMap.add binder irv saved_env in
       update_computation { current_comp = next_comp; env = env'; stack = other_frames }
 
 let rec bind_many env binders values =
   match binders, values with
   | [], [] -> env
   | binder :: binders, value :: values ->
-    bind_many (VarMap.add (Var.of_binder binder) value env) binders values
+    bind_many (VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env) binders values
   | _ -> runtime_error "Arity mismatch while binding values"
 
 let rec find_empty_guard guards =
@@ -279,7 +292,7 @@ let evaluate_guard runtime_name env guards mailbox =
       match (count, find_empty_guard guards) with
       | (1, Some (mailbox_binder, cont)) ->
         let mailbox_value = mk_name runtime_name in
-        let next_env = VarMap.add (Var.of_binder mailbox_binder) mailbox_value env in
+        let next_env = VarMap.add (Var.of_binder mailbox_binder) (runtime_of_ir env mailbox_value) env in
         Some (next_env, cont, messages) 
       | _ -> None
     end
@@ -293,7 +306,7 @@ let evaluate_guard runtime_name env guards mailbox =
         let mailbox_value = mk_name runtime_name in
         let next_env =
           bind_many env recv_guard.payload_binders payloads
-          |> VarMap.add (Var.of_binder recv_guard.mailbox_binder) mailbox_value
+          |> VarMap.add (Var.of_binder recv_guard.mailbox_binder) (runtime_of_ir env mailbox_value)
         in
         Some (next_env, recv_guard.cont, remaining_messages) 
     end
@@ -487,14 +500,21 @@ let apply_primitive prim env args =
 
 let lookup_lambda name refcount_map =
   match RuntimeNameMap.find_opt name refcount_map with
-    | Some (count, v) ->
+    | Some (_, runtime_value) ->
       begin
-        match get_node v with
-          | Lam { parameters; body; _} -> (count, WithIrMetadata.fvs v, parameters, body)
-          | bad -> 
+        match runtime_value with
+          | RuntimeValue.Closure { lambda; value_env } ->
+              let fvs =
+                value_env
+                |> VarMap.bindings
+                |> List.map fst
+                |> VarSet.of_list
+              in
+              (lambda, fvs, value_env)
+          | bad ->
               runtime_error 
                 (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
-                  RuntimeName.pp name Ir.pp_value_node bad)
+                  RuntimeName.pp name Ir.pp_value (ir_of_runtime bad))
       end
     | None -> runtime_error
       (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)
@@ -557,17 +577,30 @@ let step_current state =
                 let call_env = bind_many VarMap.empty binders args in
                 finish_current { current with current_comp = decl.decl_body; env = call_env }
             end
-          | Lam _ -> failwith "TODO"
+          (* Applying a function literal. We don't need to heap-allocate this, or do anything
+             special with closures, as it can't be re-called. *)
+          | Lam lambda ->
+              let binders = List.map fst lambda.parameters in
+              let extended_env = bind_many current.env binders args in
+              finish_current { current with current_comp = lambda.body; env = extended_env  }
           (* We've previously bound the function. Need to dup its FVs, drop a
             ref, extend the env with param -> arg mappings, and eval body *) 
           | Name name ->
-            let dup_cmd = failwith "TODO" in
-            let drop_cmd = failwith "TODO" in
-            let extended_env = failwith "TODO" in
-            let (count, fvs, params, body) = lookup_lambda name state.reference_counted_values in
-            let new_stack = failwith "TODO" in
+            let (lambda, fvs, closure_env) = lookup_lambda name state.reference_counted_values in
+            let dup_cmd = WithIrMetadata.make (Ir.Dup (List.map (fun n -> (n, 1)) (VarSet.elements fvs))) in
+            let drop_cmd = WithIrMetadata.make (Ir.Drop { vars = []; names = [ (name, 1) ] }) in
+            let extended_env = bind_many closure_env (List.map fst lambda.parameters) args in
+            let new_stack =
+              SeqFrame { saved_env = current.env; next_comp = drop_cmd }
+              :: SeqFrame { saved_env = extended_env; next_comp = lambda.body }
+              :: current.stack
+            in
             finish_current { current with current_comp = dup_cmd; stack = new_stack }
-          | _ -> runtime_error "Function position must be a declaration variable or primitive"
+          | other ->
+            runtime_error
+              (Format.asprintf
+                "Function position must be a declaration, lambda, or primitive, but got %a"
+                Ir.pp_value_node other)
         end
       | If { test; then_expr; else_expr } ->
         if bool_of_value current.env test then
@@ -585,10 +618,10 @@ let step_current state =
         begin
           match get_node (force_value current.env term) with
           | Inl value ->
-            let env' = VarMap.add (Var.of_binder binder1) value current.env in
+            let env' = VarMap.add (Var.of_binder binder1) (runtime_of_ir current.env value) current.env in
             finish_current { current with current_comp = comp1; env = env' }
           | Inr value ->
-            let env' = VarMap.add (Var.of_binder binder2) value current.env in
+            let env' = VarMap.add (Var.of_binder binder2) (runtime_of_ir current.env value) current.env in
             finish_current { current with current_comp = comp2; env = env' }
           | _ ->
           runtime_error
@@ -602,8 +635,8 @@ let step_current state =
           | Cons (head, tail) ->
             let env' =
               current.env
-              |> VarMap.add (Var.of_binder binder1) head
-              |> VarMap.add (Var.of_binder binder2) tail
+              |> VarMap.add (Var.of_binder binder1) (runtime_of_ir current.env head)
+              |> VarMap.add (Var.of_binder binder2) (runtime_of_ir current.env tail)
             in
             finish_current { current with current_comp = comp; env = env' }
           | _ ->
@@ -611,24 +644,24 @@ let step_current state =
             (Format.asprintf "Expected list value for case-list analysis, got: %a" pp_value (force_value current.env term))
         end
       | Dup vars ->
-        let (mailboxes, _) = apply_refcount_delta current.env state.mailboxes vars 1 in
+        let (mailboxes, _) = apply_refcount_delta current.env state.mailboxes vars [] 1 in
         finish_current_with_mailboxes { current with current_comp = return_unit_value } mailboxes
-      | Drop vars ->
+      | Drop { vars; names } ->
         (* After doing the reference updates, we might have some blocked processes that we can awake,
            due to Empty references becoming fireable *)
-        let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars (-1) in
+        let (mailboxes, to_wake) = apply_refcount_delta current.env state.mailboxes vars names (-1) in
         let (blocked, computations) = enqueue_unblocked_many state.blocked rest to_wake in
         let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
       | New _ ->
-        let runtime_name = RuntimeName.make () in
+        let runtime_name = RuntimeName.make_mailbox () in
         let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
         let return_name = mk_name runtime_name in
         finish_current_with_mailboxes { current with current_comp =
         WithIrMetadata.make (Return return_name) } mailboxes
       | Send { target; message; iname = _ } ->
         let target_var = variable_name_from_target target in
-        let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
+        let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in
         let message = (fst message, List.map (force_value current.env) (snd message)) in
         begin
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
@@ -650,7 +683,7 @@ let step_current state =
         end
       | Guard { target; pattern = _; guards; iname = _ } ->
         let target_var = variable_name_from_target target in
-        let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
+        let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in
         begin
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
           | None ->
@@ -676,19 +709,22 @@ let step_current state =
           | Variable (var, _) -> var
           | _ -> runtime_error "Free expects a variable mailbox target"
         in
-        let runtime_name = runtime_name_of_value current.env (lookup_env current.env target_var) in
+        let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in
         begin
           match RuntimeNameMap.find_opt runtime_name state.mailboxes with
           | Some (1, []) ->
             let mailboxes = RuntimeNameMap.remove runtime_name state.mailboxes in
             finish_current_with_mailboxes { current with current_comp = return_unit_value } mailboxes
-        | Some entry ->
-          runtime_error
-            (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
-              RuntimeName.pp runtime_name pp_mailbox_entry entry)
-        | None ->
-          runtime_error
-            (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp runtime_name)
+          | Some (refcount, _) when refcount > 1 ->
+            let blocked = RuntimeNameMap.add runtime_name current state.blocked in
+            Some { state with computations = rest; blocked; step_count = 0 }
+          | Some entry ->
+            runtime_error
+              (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
+                RuntimeName.pp runtime_name pp_mailbox_entry entry)
+          | None ->
+            runtime_error
+              (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp runtime_name)
         end
       | Spawn comp ->
         let spawned = { current_comp = comp; env = current.env; stack = [] } in
@@ -717,7 +753,7 @@ let initial_state program =
   in
   { program; step_count = 0; computations;
 	blocked = RuntimeNameMap.empty; mailboxes = RuntimeNameMap.empty;
-	reference_counted_values = RuntimeNameMap.empty }
+  reference_counted_values = RuntimeNameMap.empty }
 
 let rec run_until_finished state =
   match step state with

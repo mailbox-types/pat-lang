@@ -39,7 +39,10 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 WithIrMetadata.make ~fvs (Let { binder; term = e1_trans; cont = e2_trans })
             else
                 let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
-                let drop_node = WithIrMetadata.make ~fvs:(VarSet.singleton binder_var) (Drop ([(binder_var, 1)])) in
+                let drop_node =
+                    WithIrMetadata.make ~fvs:(VarSet.singleton binder_var)
+                        (Drop { vars = [ (binder_var, 1) ]; names = [] })
+                in
                 let e2_trans_with_drop = 
                     let fvs = VarSet.union (get_fvs drop_node) (get_fvs e2_trans) in
                     WithIrMetadata.make ~fvs (Seq (drop_node, e2_trans))
@@ -134,7 +137,10 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                     translated_cont
                 else
                     (* Drop binders if variables unused *)
-                    let drop_node = WithIrMetadata.make ~fvs:cont_drop (Drop (VarSet.to_list cont_drop |> List.map (fun v -> (v, 1)))) in
+                    let drop_node =
+                        WithIrMetadata.make ~fvs:cont_drop
+                            (Drop { vars = (VarSet.to_list cont_drop |> List.map (fun v -> (v, 1))); names = [] })
+                    in
                     let fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_cont) in
                     WithIrMetadata.make ~fvs (Seq (drop_node, translated_cont))
                 in
@@ -161,7 +167,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                     VarSet.elements vars
                     |> List.map (fun v -> (v, 1))
                 in
-                WithIrMetadata.make ~fvs:vars (Drop var_list)
+                WithIrMetadata.make ~fvs:vars (Drop { vars = var_list; names = [] })
             in
             (* ei_drop: variables owned by branches (+binder), but not used. 
                ensures variables are dropped if they're not used in that branch. *)
@@ -223,7 +229,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                     VarSet.elements vars
                     |> List.map (fun v -> (v, 1))
                 in
-                WithIrMetadata.make ~fvs:vars (Drop var_list)
+                WithIrMetadata.make ~fvs:vars (Drop { vars = var_list; names = [] })
             in
             let nil_drop = mk_drop (VarSet.diff branches_owned nil_owned) in
             let cons_drop = mk_drop (
@@ -398,9 +404,10 @@ and insert_reference_counting_val decls borrowed owned value : (VarMultiset.t * 
             (dups, WithIrMetadata.make ~fvs:(get_fvs v) (Inr v))
         | Lam { linear; parameters; result_type; body } ->
             let fvs = get_fvs value in
+            let body_fvs = get_fvs body in
             let (used_vars, unused_vars) =
                 List.partition
-                    (fun v -> VarSet.mem v fvs)
+                    (fun v -> VarSet.mem v body_fvs)
                     (List.map (fun (p, _) -> Ir.Var.of_binder p ) parameters)
             in
             (* Transform expression under empty borrowed environment; owned environment of
@@ -410,10 +417,16 @@ and insert_reference_counting_val decls borrowed owned value : (VarMultiset.t * 
             let to_dup = VarSet.diff fvs owned |> VarSet.to_list |> VarMultiset.of_list in
             let to_drop = List.map (fun v -> (v, 1)) unused_vars in
             let transformed_body =
-                let drop_node = WithIrMetadata.make ~fvs:(VarSet.of_list unused_vars) (Drop to_drop) in
+                let drop_node =
+                    WithIrMetadata.make ~fvs:(VarSet.of_list unused_vars)
+                        (Drop { vars = to_drop; names = [] })
+                in
                 let body_trans = insert_reference_counting_comp decls VarSet.empty body_owned_vars body in
                 let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs body_trans) in
-                WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, body_trans))
+                if List.is_empty unused_vars then
+                    body_trans
+                else 
+                    WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, body_trans))
             in
             (to_dup, WithIrMetadata.make ~fvs:(VarSet.union (VarSet.of_list used_vars) fvs) (Lam { linear; parameters; result_type; body = transformed_body }))
 and insert_reference_counting_guard decls borrowed guards_owned guard =
@@ -437,7 +450,10 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
                 if VarSet.is_empty cont_drop then
                     translated_cont
                 else
-                    let drop_node = WithIrMetadata.make ~fvs:cont_drop (Drop (VarSet.elements cont_drop |> List.map (fun v -> (v, 1)))) in
+                    let drop_node =
+                        WithIrMetadata.make ~fvs:cont_drop
+                            (Drop { vars = (VarSet.elements cont_drop |> List.map (fun v -> (v, 1))); names = [] })
+                    in
                     let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_cont) in
                     WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, translated_cont))
             in
@@ -457,7 +473,10 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
                 if VarSet.is_empty e_drop then
                     translated_e
                 else
-                    let drop_node = WithIrMetadata.make ~fvs:e_drop (Drop (VarSet.elements e_drop |> List.map (fun v -> (v, 1)))) in
+                    let drop_node =
+                        WithIrMetadata.make ~fvs:e_drop
+                            (Drop { vars = (VarSet.elements e_drop |> List.map (fun v -> (v, 1))); names = [] })
+                    in
                     let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_e) in
                     WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, translated_e))
             in
@@ -483,13 +502,27 @@ let insert_reference_counting prog =
         let parameter_vars =
             decl.decl_parameters
             |> List.map (fun (b, _) -> Ir.Var.of_binder b)
-            |> Ir.VarSet.of_list
         in
-        (* Nothing should be free in a declaration other than the variables
-        bound in the parameters, so our initial owned set is parameter_vars. *)
-        let decl_body =
-            insert_reference_counting_comp decls Ir.VarSet.empty parameter_vars decl.decl_body
+        let body_fvs = get_fvs decl.decl_body in
+        let (used_params, unused_params) =
+            List.partition (fun v -> VarSet.mem v body_fvs) parameter_vars
+        in
+        let body_owned_vars = used_params |> Ir.VarSet.of_list in
+        let body_trans =
+            insert_reference_counting_comp decls Ir.VarSet.empty body_owned_vars decl.decl_body
             |> Ir.normalise_seq
+        in
+        let decl_body =
+            if List.is_empty unused_params then
+                body_trans
+            else
+                let unused_set = unused_params |> Ir.VarSet.of_list in
+                let drop_node =
+                    WithIrMetadata.make ~fvs:unused_set
+                        (Drop { vars = (List.map (fun v -> (v, 1)) unused_params); names = [] })
+                in
+                let fvs = VarSet.union (get_fvs drop_node) (get_fvs body_trans) in
+                WithIrMetadata.make ~fvs (Seq (drop_node, body_trans))
         in
         { decl with decl_body }
     in

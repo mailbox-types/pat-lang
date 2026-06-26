@@ -214,7 +214,8 @@ and value_node =
     | Inl of value
     | Inr of value
     | Lam of lambda
-and message = (string * value list)
+and message_tag = string
+and message = (message_tag * value list)
     [@@name "msg"]
 and primitive_name = string
 and atom_name = string

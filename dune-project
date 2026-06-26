@@ -20,4 +20,5 @@
   z3
   menhir
   bag
+  eio
 ))

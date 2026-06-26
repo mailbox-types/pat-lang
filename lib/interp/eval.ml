@@ -3,6 +3,7 @@ open Common_types
 open Util.Utility
 open Ir
 open Runtime_common
+open Eio
 
 let max_steps_before_yield = 20
 
@@ -42,32 +43,34 @@ type computation_state = {
 }
 
 type mailbox_entry = int * message list
-
-type blocked_state = computation_state RuntimeNameMap.t
-type mailbox_state = mailbox_entry RuntimeNameMap.t
+(* Pairs a runtime name with a promise resolver to trigger a recheck of the mailbox. 
+An optimisation may be to only wake up when we know a given message will make the mailbox,
+but that comes later.
+*)
+type blocked_state = (RuntimeName.t, unit Promise.u) Hashtbl.t
+type mailbox_state = (RuntimeName.t, mailbox_entry) Hashtbl.t
+type reference_counting_state = (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t
 
 type machine_state = {
   program: program;
-  step_count: int;
-  computations: computation_state list;
   blocked: blocked_state;
   mailboxes: mailbox_state;
   reference_counted_values: (int * RuntimeValue.t) RuntimeNameMap.t
 }
 
+let system_state = ref None
+
 type step_result =
   | Stepped of machine_state
   | Finished
 
-let is_finished state =
-  state.computations = [] && RuntimeNameMap.is_empty state.blocked
-
-let rotate_computations = function
-  | [] -> []
-  | comp :: rest -> rest @ [comp]
-
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
+
+let machine_state () =
+  match !system_state with
+    | None -> runtime_error "Make sure to run `Eval.init program` first"
+    | Some x -> x
 
 let pp_mailbox_entry ppf (refcount, messages) =
   let pp_message ppf (tag, payloads) =

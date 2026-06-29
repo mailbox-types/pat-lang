@@ -1,5 +1,6 @@
 (* Interface for the runtime system. *)
 open Common
+open Runtime_common
 
 type t
 val init : Ir.program -> t
@@ -18,3 +19,5 @@ val sleep : t -> int -> unit
 val yield : t -> (unit -> unit) -> unit
 val dup : t -> (Ir.RuntimeName.t * int) list -> unit
 val drop : t -> (Ir.RuntimeName.t * int) list -> unit
+
+val lookup_lambda : t -> Ir.RuntimeName.t -> (Ir.lambda * Ir.VarSet.t * value_env)

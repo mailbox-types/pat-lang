@@ -64,9 +64,11 @@ type t = {
   switch: Eio.Switch.t;
   blocked: blocked_state;
   mailboxes: mailbox_state;
-  reference_counted_values: ((int * RuntimeValue.t), RuntimeName.t) Hashtbl.t;
-  step_count: int
+  reference_counted_values: (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t;
+  step_count: int ref
 }
+
+let max_step_count = 20
 
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
@@ -78,17 +80,26 @@ let update_hashtable : ('a, 'b) Hashtbl.t -> ('b option -> 'b) -> 'a -> unit =
 
 let run (program : program) (callback: t -> unit) : unit = 
   Eio_main.run (fun _env ->
-    Eio.Switch.run (fun sw ->
-      let state = {
-        program;
-        switch = sw;
-        blocked = Hashtbl.create 128;
-        mailboxes = Hashtbl.create 128;
-        reference_counted_values = Hashtbl.create 128;
-        step_count = 0
-      } in
-      Fiber.fork ~sw (fun () -> callback state)
-    )
+    let final_blocked =
+      Eio.Switch.run (fun sw ->
+        let state = {
+          program;
+          switch = sw;
+          blocked = Hashtbl.create 128;
+          mailboxes = Hashtbl.create 128;
+          reference_counted_values = Hashtbl.create 128;
+          step_count = ref 0
+        } in
+        Random.self_init ();
+        Fiber.fork ~sw (fun () -> callback state);
+        state.blocked
+      )
+    in
+    (* Switch will block until everything has finished.
+       We now just need to check to see whether any threads 
+       remain blocked (this would be a deadlock) *)
+    if (not (Hashtbl.length final_blocked = 0)) then
+      runtime_error "No runnable computations remain (deadlock or blocked system)"
   )
 
 let spawn (runtime : t) (callback: t -> unit) : unit =
@@ -103,6 +114,34 @@ let await_message (_runtime : t) (_tags : message_tag list) : message option = f
 let send (_runtime : t) (_message : Runtime_common.runtime_message) (_target : RuntimeName.t) : unit = failwith "TODO"
 let sleep (_runtime : t) (_duration : int) : unit = failwith "TODO"
 (* Called after each computation step. May potentially yield to another thread. *)
-let yield (_runtime : t) (callback: unit -> unit) = failwith "TODO"
+let yield (runtime : t) (callback: unit -> unit) =
+  let cur_steps = !(runtime.step_count) in
+  if cur_steps > max_step_count then
+    let () = runtime.step_count := 0 in
+    Eio.Fiber.yield ()
+  else
+    runtime.step_count := cur_steps + 1;
+    callback ()
 let dup (_runtime : t) (_counts : (RuntimeName.t * int) list) : unit = failwith "TODO"
 let drop (_runtime : t) (_counts : (RuntimeName.t * int) list) : unit = failwith "TODO"
+
+let lookup_lambda runtime name =
+  match Hashtbl.find_opt runtime.reference_counted_values name with
+    | Some (_, runtime_value) ->
+      begin
+        match runtime_value with
+          | RuntimeValue.Closure { lambda; value_env } ->
+              let fvs =
+                value_env
+                |> VarMap.bindings
+                |> List.map fst
+                |> VarSet.of_list
+              in
+              (lambda, fvs, value_env)
+          | bad ->
+              runtime_error 
+                (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
+                  RuntimeName.pp name Ir.pp_value (RuntimeValue.to_ir bad))
+      end
+    | None -> runtime_error
+      (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)

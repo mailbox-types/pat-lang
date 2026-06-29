@@ -555,28 +555,11 @@ let rec step_current runtime state =
       finish_current_with_mailboxes { current with current_comp =
       WithIrMetadata.make (Return return_name) } mailboxes
       *)
-    | Send { target; message; iname = _ } ->
+    | Send { target; message = (tag, payloads); iname = _ } ->
       let target_var = variable_name_from_target target in
-      let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in
-      let message = (fst message, List.map (force_value current.env) (snd message)) in
-      begin
-        match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-          | None ->
-            runtime_error
-              (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
-          | Some (refcount, messages) ->
-            let next_refcount = refcount - 1 in
-            if next_refcount < 0 then
-              runtime_error
-                (Format.asprintf "Mailbox %a reference count became negative after send: %a"
-                  RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
-              let mailboxes =
-                RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes
-              in
-              let blocked, computations_tail = enqueue_unblocked state.blocked rest runtime_name in
-              let current' = { current with current_comp = return_unit_value } in
-              Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
-      end
+      let mb_name = runtime_name_of_value (lookup_env state.env target_var) in
+      let runtime_message = (tag, List.map (force_value state.env) payloads) in
+      Runtime.send runtime mb_name runtime_message
     | Guard { target; pattern = _; guards; iname = _ } ->
       let target_var = variable_name_from_target target in
       let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in

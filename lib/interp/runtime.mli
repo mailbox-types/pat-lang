@@ -13,7 +13,7 @@ val free_mailbox : t -> Ir.RuntimeName.t -> unit
    TODO: Maybe implement an isomorphic type to make this clearer.
 *)
 val await_message : t -> Ir.message_tag list -> Ir.message option
-val send :  t -> Runtime_common.runtime_message -> Ir.RuntimeName.t -> unit
+val send :  t -> Ir.RuntimeName.t -> Runtime_common.runtime_message  -> unit
 val sleep : t -> int -> unit
 (* Called after each computation step. May potentially yield to another thread. *)
 val yield : t -> (unit -> unit) -> unit

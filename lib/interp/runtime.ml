@@ -3,51 +3,6 @@ open Runtime_common
 open Eio
 open Ir
 
-
-(*
-let update_mailbox_refcount mailboxes_acc to_wake mb count sign =
-  match RuntimeNameMap.find_opt mb mailboxes_acc with
-  | None ->
-    runtime_error
-      (Format.asprintf "Mailbox %a missing during reference-count update" RuntimeName.pp mb)
-  | Some (refcount, messages) ->
-    let next_refcount = refcount + (sign * count) in
-    let next_acc = RuntimeNameMap.add mb (next_refcount, messages) mailboxes_acc in
-    if next_refcount <= 0 then
-      runtime_error
-        (Format.asprintf "Mailbox %a reference count became below-zero: %a"
-          RuntimeName.pp mb pp_mailbox_entry (refcount, messages))
-    else if next_refcount = 1 then
-      (next_acc, mb :: to_wake)
-    else
-      (next_acc, to_wake)
-
-let apply_refcount_delta env mailboxes vars names sign =
-  let open RuntimeName in
-  let (mailboxes_after_vars, to_wake_after_vars) =
-  List.fold_left
-    (fun (mailboxes_acc, to_wake) (var, count) ->
-      if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
-        match get_node (ir_of_runtime (lookup_env env var)) with
-          | Name ((MailboxName _) as mb) ->
-            update_mailbox_refcount mailboxes_acc to_wake mb count sign
-          | Name (ValueName _) ->
-            (mailboxes_acc, to_wake)
-          | _ -> (mailboxes_acc, to_wake) (* Reference counting for other things is a no-op at present. *)
-        )
-    (mailboxes, [])
-    vars
-  in
-  List.fold_left
-    (fun (mailboxes_acc, to_wake) (name, count) ->
-      if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
-      match name with
-      | RuntimeName.MailboxName _ -> update_mailbox_refcount mailboxes_acc to_wake name count sign
-      | RuntimeName.ValueName _ -> (mailboxes_acc, to_wake))
-    (mailboxes_after_vars, to_wake_after_vars)
-    names
-*)
-
 type runtime_message = (message_tag * RuntimeValue.t list)
 type mailbox = int * runtime_message list
 
@@ -62,6 +17,7 @@ type reference_counting_state = (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.
 type t = {
   program: program;
   switch: Eio.Switch.t;
+  env: Eio_unix.Stdenv.base;
   blocked: blocked_state;
   mailboxes: mailbox_state;
   reference_counted_values: (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t;
@@ -141,19 +97,20 @@ let wake_blocked_many runtime to_wake =
     to_wake
 
 let run (program : program) (callback: t -> unit) : unit = 
-  Eio_main.run (fun _env ->
+  Eio_main.run (fun env ->
     let final_blocked =
-      Eio.Switch.run (fun sw ->
+      Eio.Switch.run (fun switch ->
         let state = {
           program;
-          switch = sw;
+          switch;
+          env;
           blocked = Hashtbl.create 128;
           mailboxes = Hashtbl.create 128;
           reference_counted_values = Hashtbl.create 128;
           step_count = ref 0
         } in
         Random.self_init ();
-        Fiber.fork ~sw (fun () -> callback state);
+        Fiber.fork ~sw:switch (fun () -> callback state);
         state.blocked
       )
     in
@@ -171,8 +128,47 @@ let new_mailbox (runtime : t) : RuntimeName.t =
   let mailbox_name = RuntimeName.make_mailbox () in
   Hashtbl.add runtime.mailboxes mailbox_name (1, []);
   mailbox_name
-let free_mailbox (_runtime : t) (_mailbox : RuntimeName.t) : unit = failwith "TODO"
-let await_message (_runtime : t) (_tags : message_tag list) : message option = failwith "TODO"
+
+let rec free_mailbox (runtime : t) (mailbox : RuntimeName.t) : unit =
+  match Hashtbl.find_opt runtime.mailboxes mailbox with
+  | None ->
+    runtime_error
+      (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp mailbox)
+  | Some (1, []) ->
+    Hashtbl.remove runtime.mailboxes mailbox
+  | Some (refcount, _) when refcount > 1 ->
+    let (wait_for_retry, wakeup) = Promise.create () in
+    Hashtbl.replace runtime.blocked mailbox wakeup;
+    Promise.await wait_for_retry;
+    free_mailbox runtime mailbox
+  | Some entry ->
+    runtime_error
+      (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
+        RuntimeName.pp mailbox pp_mailbox_entry entry)
+
+let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag list) : runtime_message option =
+  match Hashtbl.find_opt runtime.mailboxes name with
+  | None ->
+    runtime_error
+      (Format.asprintf "Guard target mailbox %a does not exist" RuntimeName.pp name)
+  (* If the mailbox is empty and has refcount 1, then we can trigger an empty guard. *)
+  | Some (refcount, messages) when refcount = 1 && List.is_empty messages -> None
+  | Some (refcount, messages) ->
+    (* Otherwise we need to check whether any messages in the mailbox are contained in the tag list *)
+    begin
+      match find_first_matching_message tags messages with
+        (* If so, update mailbox and return *)
+        | Some (msg, updated_mb) ->
+          let () = Hashtbl.replace runtime.mailboxes name (refcount, updated_mb) in
+          Some msg
+        (* If not, we need to block and re-check *)
+        | None ->
+          let (wait_for_retry, wakeup) = Promise.create () in
+          Hashtbl.replace runtime.blocked name wakeup;
+          Promise.await wait_for_retry;
+          await_message runtime name tags
+    end
+
 let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.runtime_message) : unit =
   match Hashtbl.find_opt runtime.mailboxes runtime_name with
   | None ->
@@ -193,7 +189,7 @@ let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.
         Promise.resolve wakeup ()
     end
 
-let sleep (_runtime : t) (_duration : int) : unit = failwith "TODO"
+let sleep (_runtime : t) (_duration : int) : unit = ()
 (* Called after each computation step. May potentially yield to another thread. *)
 let yield (runtime : t) (callback: unit -> unit) =
   let cur_steps = !(runtime.step_count) in

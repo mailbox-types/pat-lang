@@ -78,3 +78,53 @@ type value_env = RuntimeValue.value_env
 
 type runtime_message = (Ir.message_tag * RuntimeValue.t list)
 
+
+let rec find_empty_guard guards =
+  match guards with
+  (* Shouldn't happen in a well-typed program -- must always have an empty guard
+     if there's the possibility that a mailbox will be empty *)
+  | [] -> runtime_error "No messages available but no 'empty' guard."
+  | guard :: rest ->
+    begin
+      match WithIrMetadata.node guard with
+      | Empty (mailbox_binder, cont) -> (mailbox_binder, cont)
+      | _ -> find_empty_guard rest
+    end
+
+(* Finds the first matching guard for a given mailbox. Returns None if no messages match. *)
+let rec find_first_matching_message tags mailbox =
+  let remove_first_tagged_message tag messages =
+    let rec aux prefix = function
+      | [] -> None
+      | ((msg_tag, _) as msg) :: rest ->
+        if String.equal msg_tag tag then
+          Some (msg, List.rev_append prefix rest)
+        else
+          aux (msg :: prefix) rest
+    in
+    aux [] messages
+  in
+  match tags with
+    (* No more guards to try; nothing in mailbox matches *)
+    | [] -> None
+    | tag :: rest ->
+      begin
+        match remove_first_tagged_message tag mailbox with
+          (* Mailbox doesn't contain any message for guards; continue *)
+          | None -> find_first_matching_message rest mailbox
+          (* Mailbox contains message for guard; return payloads and remaining messages *)
+          | Some (msg, remaining_messages) ->
+            Some (msg, remaining_messages)
+      end
+
+(* Find guard for a given tag. *)
+let rec find_receive_guard tag guards =
+  match guards with
+  | [] -> runtime_error
+      (Format.asprintf "No receive guard available for message tag %s. This should not happen." tag)
+  | guard :: rest ->
+    begin
+      match WithIrMetadata.node guard with
+      | Receive recv_guard when recv_guard.tag = tag -> recv_guard
+      | _ -> find_receive_guard tag rest 
+    end

@@ -326,7 +326,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
     (dup ("consumerRef3":1);
            (consumerRef3 ! Msg();*)
            (* WIP: Go from here, sort this out *)
-and transform_val_sequence decls borrowed owned vs : (VarMultiset.t * value list) =
+and transform_val_sequence decls borrowed owned vs =
     let rec transform_vals fvs_acc = function
         | [] -> ([], VarMultiset.empty)
         | (cur_val :: vals) ->
@@ -362,7 +362,7 @@ However this doesn't work because we can only send syntactic values. Instead we'
   x ! M(y); guard y { ... }
 It's not as exactly local as Perceus but it's (hopefully!) safe.
 *)
-and insert_reference_counting_val decls borrowed owned value : (VarMultiset.t * value)=
+and insert_reference_counting_val decls borrowed owned value =
     let decl_vars =
         decls |> List.map Var.of_binder |> VarSet.of_list
     in

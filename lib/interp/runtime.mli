@@ -12,7 +12,7 @@ val free_mailbox : t -> Ir.RuntimeName.t -> unit
     a free guard should be invoked.
    TODO: Maybe implement an isomorphic type to make this clearer.
 *)
-val await_message : t -> Ir.RuntimeName.t -> Ir.message_tag list -> Ir.message option
+val await_message : t -> Ir.RuntimeName.t -> Ir.message_tag list -> Runtime_common.runtime_message option
 val send :  t -> Ir.RuntimeName.t -> Runtime_common.runtime_message  -> unit
 val sleep : t -> int -> unit
 (* Called after each computation step. May potentially yield to another thread. *)

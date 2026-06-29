@@ -68,7 +68,7 @@ let rec normalise_function_value env value =
     end
   | _ -> value
 
-let rec runtime_name_of_value env value =
+let runtime_name_of_value env value =
   match RuntimeValue.of_ir env value with
   | RuntimeValue.Name runtime_name -> runtime_name
   | v ->
@@ -87,17 +87,6 @@ let lookup_runtime_names env vars =
       | None -> None
       | Some name -> Some (name, count))
     vars
-
-let remove_first_tagged_message tag messages =
-  let rec aux prefix = function
-    | [] -> None
-    | ((msg_tag, payloads) as msg) :: rest ->
-      if String.equal msg_tag tag then
-        Some (payloads, List.rev_append prefix rest)
-      else
-        aux (msg :: prefix) rest
-  in
-  aux [] messages
 
 let decl_map program =
   List.fold_left
@@ -164,73 +153,23 @@ let handle_return runtime state value =
       let env' = VarMap.add binder irv saved_env in
       Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
 
-let rec bind_many env binders values =
+let rec bind_many binders values env =
   match binders, values with
   | [], [] -> env
   | binder :: binders, value :: values ->
-    bind_many (VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env) binders values
+    bind_many binders values (VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env)
+  | _ -> runtime_error "Arity mismatch while binding values"
+
+let rec bind_many_rt binders values env =
+  match binders, values with
+  | [], [] -> env
+  | binder :: binders, value :: values ->
+    bind_many_rt binders values (VarMap.add (Var.of_binder binder) value env)
   | _ -> runtime_error "Arity mismatch while binding values"
 
 
-let bind env binder value =
+let bind binder value env =
   VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env
-
-let rec find_empty_guard guards =
-  match guards with
-  (* Shouldn't happen in a well-typed program -- must always have an empty guard
-     if there's the possibility that a mailbox will be empty *)
-  | [] -> runtime_error "No messages available but no 'empty' guard."
-  | guard :: rest ->
-    begin
-      match get_node guard with
-      | Empty (mailbox_binder, cont) -> (mailbox_binder, cont)
-      | _ -> find_empty_guard rest
-    end
-
-let rec find_receive_guard guards messages =
-  match guards with
-  | [] -> None
-  | guard :: rest ->
-    begin
-      match get_node guard with
-      | Receive recv_guard ->
-        begin
-          match remove_first_tagged_message recv_guard.tag messages with
-          | None -> find_receive_guard rest messages
-          | Some (payloads, remaining_messages) ->
-            Some (recv_guard, payloads, remaining_messages)
-        end
-      | _ -> find_receive_guard rest messages
-    end
-
-let evaluate_guard runtime_name env guards mailbox =
-  let (count, messages) = mailbox in
-  match messages with
-  | [] ->
-    (* If there aren't any messages then we'll need to check whether the reference count is 1. 
-       If so we can evaluate the empty guard; if not then we'll need to block *)
-    begin
-      match (count, find_empty_guard guards) with
-      | (1, Some (mailbox_binder, cont)) ->
-        let mailbox_value = mk_name runtime_name in
-        let next_env = VarMap.add (Var.of_binder mailbox_binder) (runtime_of_ir env mailbox_value) env in
-        Some (next_env, cont, messages) 
-      | _ -> None
-    end
-  | _ ->
-    begin
-      match find_receive_guard guards messages with
-      | None -> None
-      | Some (recv_guard, payloads, remaining_messages) ->
-        if List.length recv_guard.payload_binders <> List.length payloads then
-          runtime_error "Receive payload arity mismatch";
-        let mailbox_value = mk_name runtime_name in
-        let next_env =
-          bind_many env recv_guard.payload_binders payloads
-          |> VarMap.add (Var.of_binder recv_guard.mailbox_binder) (runtime_of_ir env mailbox_value)
-        in
-        Some (next_env, recv_guard.cont, remaining_messages) 
-    end
 
 let bool_of_value env value =
   let forced = force_value env value in
@@ -428,9 +367,6 @@ let rec step_current runtime state =
   let return comp_state value =
     step_to comp_state (WithIrMetadata.make (Ir.Return value))
   in
-  let return_unit_value =
-    WithIrMetadata.make (Return (WithIrMetadata.make (Tuple [])))
-  in
   let return_unit comp_state =
     return comp_state (WithIrMetadata.make (Tuple []))
   in
@@ -471,14 +407,14 @@ let rec step_current runtime state =
             | None -> runtime_error "Attempted to call unknown declaration"
             | Some decl ->
               let binders = List.map fst decl.decl_parameters in
-              let call_env = bind_many VarMap.empty binders args in
+              let call_env = bind_many binders args VarMap.empty in
               finish_current { state with current_comp = decl.decl_body; env = call_env }
           end
         (* Applying a function literal. We don't need to heap-allocate this, or do anything
             special with closures, as it can't be re-called. *)
         | Lam lambda ->
             let binders = List.map fst lambda.parameters in
-            let extended_env = bind_many state.env binders args in
+            let extended_env = bind_many binders args state.env in
             finish_current { state with current_comp = lambda.body; env = extended_env  }
         (* We've previously bound the function. Need to dup its FVs, drop a
           ref, extend the env with param -> arg mappings, and eval body *) 
@@ -486,7 +422,7 @@ let rec step_current runtime state =
           let (lambda, fvs, closure_env) = Runtime.lookup_lambda runtime name in
           let dup_cmd = WithIrMetadata.make (Ir.Dup (List.map (fun n -> (n, 1)) (VarSet.elements fvs))) in
           let drop_cmd = WithIrMetadata.make (Ir.Drop { vars = []; names = [ (name, 1) ] }) in
-          let extended_env = bind_many closure_env (List.map fst lambda.parameters) args in
+          let extended_env = bind_many (List.map fst lambda.parameters) args closure_env in
           let new_stack =
             SeqFrame { saved_env = state.env; next_comp = drop_cmd }
             :: SeqFrame { saved_env = extended_env; next_comp = lambda.body }
@@ -509,7 +445,7 @@ let rec step_current runtime state =
       let tuple_binders = List.map fst binders in
       if List.length tuple_binders <> List.length tuple_values then
         runtime_error "Tuple arity mismatch in let-tuple";
-      let env' = bind_many state.env tuple_binders tuple_values in
+      let env' = bind_many tuple_binders tuple_values state.env in
       finish_current { state with current_comp = cont; env = env' }
     | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
       begin
@@ -561,7 +497,7 @@ let rec step_current runtime state =
       let runtime_message = (tag, List.map (RuntimeValue.of_ir state.env) payloads) in
       Runtime.send runtime mb_name runtime_message;
       return_unit state
-    | Guard { target; pattern = _; guards; iname = _ } ->
+    | Guard { target; guards; _ } ->
       let mb_name = runtime_name_of_value state.env target in
       let tags = List.concat_map (fun g ->
         match get_node g with
@@ -571,10 +507,17 @@ let rec step_current runtime state =
       in
       begin
         match Runtime.await_message runtime mb_name tags with
-        | Some msg -> failwith "TODO: evaluate free guard"
+        | Some (tag, rt_vals) ->
+            let recv_guard = find_receive_guard tag guards in
+            let env' =
+              state.env
+              |> bind_many_rt recv_guard.payload_binders rt_vals
+              |> bind recv_guard.mailbox_binder (WithIrMetadata.make (Name mb_name))
+            in
+            finish_current { state with env = env'; current_comp = recv_guard.cont } 
         | None ->
             let (bnd, cont) = find_empty_guard guards in
-            let env' = bind state.env bnd (WithIrMetadata.make (Name mb_name)) in
+            let env' = bind bnd (WithIrMetadata.make (Name mb_name)) state.env in
             finish_current { state with env = env'; current_comp = cont } 
       end
       (*
@@ -599,39 +542,13 @@ let rec step_current runtime state =
       end
       *)
     | Free (target, _iname) ->
-      let rt_name = RuntimeValue.of_ir target |> runtime_name_of_value in
-
-      let target_var =
-        match get_node target with
-        | Variable (var, _) -> var
-        | _ -> runtime_error "Free expects a variable mailbox target"
-      in
-      let runtime_name = runtime_name_of_value (lookup_env state.env target_var) in
-      begin
-        match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-        | Some (1, []) ->
-          let mailboxes = RuntimeNameMap.remove runtime_name state.mailboxes in
-          finish_current_with_mailboxes { state with current_comp = return_unit_value } mailboxes
-        | Some (refcount, _) when refcount > 1 ->
-          let blocked = RuntimeNameMap.add runtime_name current state.blocked in
-          Some { state with computations = rest; blocked; step_count = 0 }
-        | Some entry ->
-          runtime_error
-            (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
-              RuntimeName.pp runtime_name pp_mailbox_entry entry)
-        | None ->
-          runtime_error
-            (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp runtime_name)
-      end
+      let rt_name = runtime_name_of_value state.env target in
+      Runtime.free_mailbox runtime rt_name;
+      return_unit state
     | Spawn comp ->
       Runtime.spawn runtime
         (fun () -> step runtime (init_state state.program comp));
       return_unit state
-      (*
-      let spawned = { current_comp = comp; env = state.env; stack = [] } in
-      let current' = { state with current_comp = return_unit_value } in
-      Some (inc_step { state with computations = current' :: (rest @ [spawned]) })
-      *)
 and step runtime state =
   match step_current runtime state with
     | Stepped updated_state ->

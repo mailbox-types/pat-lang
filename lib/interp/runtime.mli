@@ -3,6 +3,8 @@ open Common
 open Runtime_common
 
 type t
+
+val run : Ir.program -> (t -> unit) -> unit
 val init : Ir.program -> t
 val spawn : t -> (unit -> unit) -> unit
 val new_mailbox : t -> Ir.RuntimeName.t

@@ -10,7 +10,6 @@ let runtime_error message =
 module RuntimeValue = struct
   type value_env = t VarMap.t
   and t =
-    | VAnnotate of t * Type.t
     | Atom of atom_name
     | Constant of constant
     | Primitive of primitive_name
@@ -27,7 +26,7 @@ module RuntimeValue = struct
 
   let rec of_ir value_env value =
     match WithIrMetadata.node value with
-    | Ir.VAnnotate (v, ty) -> VAnnotate (of_ir value_env v, ty)
+    | Ir.VAnnotate (v, _) -> of_ir value_env v
     | Ir.Atom a -> Atom a
     | Ir.Constant c -> Constant c
     | Ir.Primitive p -> Primitive p
@@ -50,8 +49,6 @@ module RuntimeValue = struct
 
   let rec to_ir runtime_value =
     match runtime_value with
-    | VAnnotate (v, ty) ->
-      WithIrMetadata.make (Ir.VAnnotate (to_ir v, ty))
     | Atom a ->
       WithIrMetadata.make (Ir.Atom a)
     | Constant c ->
@@ -72,6 +69,9 @@ module RuntimeValue = struct
       WithIrMetadata.make (Ir.Inr (to_ir v))
     | Closure { lambda; value_env = _ } ->
       WithIrMetadata.make (Ir.Lam lambda)
+
+  let pp ppf runtime_value =
+    Ir.pp_value ppf (to_ir runtime_value)
 end
 
 type value_env = RuntimeValue.value_env

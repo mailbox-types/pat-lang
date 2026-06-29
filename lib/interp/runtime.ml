@@ -78,6 +78,16 @@ let update_hashtable : ('a, 'b) Hashtbl.t -> ('b option -> 'b) -> 'a -> unit =
     let new_val = updt (Hashtbl.find_opt tbl key) in
     Hashtbl.replace tbl key new_val
 
+let pp_mailbox_entry ppf (refcount, messages) =
+  let pp_message ppf (tag, payloads) =
+    Format.fprintf ppf "%s(%a)" tag
+      (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ") RuntimeValue.pp)
+      payloads
+  in
+  Format.fprintf ppf "(refcount=%d, messages=[%a])" refcount
+    (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ") pp_message)
+    messages
+
 let run (program : program) (callback: t -> unit) : unit = 
   Eio_main.run (fun _env ->
     let final_blocked =
@@ -111,24 +121,26 @@ let new_mailbox (runtime : t) : RuntimeName.t =
   mailbox_name
 let free_mailbox (_runtime : t) (_mailbox : RuntimeName.t) : unit = failwith "TODO"
 let await_message (_runtime : t) (_tags : message_tag list) : message option = failwith "TODO"
-let send (runtime : t) (target : RuntimeName.t) (message : Runtime_common.runtime_message) : unit =
-  match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-    | None ->
+let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.runtime_message) : unit =
+  match Hashtbl.find_opt runtime.mailboxes runtime_name with
+  | None ->
+    runtime_error
+      (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
+  | Some (refcount, messages) ->
+    let next_refcount = refcount - 1 in
+    if next_refcount < 0 then
       runtime_error
-        (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
-    | Some (refcount, messages) ->
-      let next_refcount = refcount - 1 in
-      if next_refcount < 0 then
-        runtime_error
-          (Format.asprintf "Mailbox %a reference count became negative after send: %a"
-            RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
-        let mailboxes =
-          RuntimeNameMap.add runtime_name (next_refcount, messages @ [message]) state.mailboxes
-        in
-        let blocked, computations_tail = enqueue_unblocked state.blocked rest runtime_name in
-        let current' = { current with current_comp = return_unit_value } in
-        Some (inc_step { state with computations = current' :: computations_tail; blocked; mailboxes })
-end
+        (Format.asprintf "Mailbox %a reference count became negative after send: %a"
+          RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
+    Hashtbl.replace runtime.mailboxes runtime_name (next_refcount, messages @ [message]);
+    begin
+      match Hashtbl.find_opt runtime.blocked runtime_name with
+      | None -> ()
+      | Some wakeup ->
+        Hashtbl.remove runtime.blocked runtime_name;
+        Promise.resolve wakeup ()
+    end
+
 let sleep (_runtime : t) (_duration : int) : unit = failwith "TODO"
 (* Called after each computation step. May potentially yield to another thread. *)
 let yield (runtime : t) (callback: unit -> unit) =

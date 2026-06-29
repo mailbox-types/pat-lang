@@ -16,6 +16,7 @@ depends: [
   "menhir" {>= "20180523"}
   "bag"
   "eio"
+  "eio_main"
   "odoc" {with-doc}
 ]
 build: [

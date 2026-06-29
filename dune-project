@@ -21,4 +21,5 @@
   menhir
   bag
   eio
+  eio_main
 ))

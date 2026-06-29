@@ -42,36 +42,6 @@ type computation_state = {
   stack: computation_frame list
 }
 
-type mailbox_entry = int * message list
-(* Pairs a runtime name with a promise resolver to trigger a recheck of the mailbox. 
-An optimisation may be to only wake up when we know a given message will make the mailbox,
-but that comes later.
-*)
-type blocked_state = (RuntimeName.t, unit Promise.u) Hashtbl.t
-type mailbox_state = (RuntimeName.t, mailbox_entry) Hashtbl.t
-type reference_counting_state = (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t
-
-type machine_state = {
-  program: program;
-  blocked: blocked_state;
-  mailboxes: mailbox_state;
-  reference_counted_values: (int * RuntimeValue.t) RuntimeNameMap.t
-}
-
-let system_state = ref None
-
-type step_result =
-  | Stepped of machine_state
-  | Finished
-
-let runtime_error message =
-  raise (Errors.internal_error "eval.ml" message)
-
-let machine_state () =
-  match !system_state with
-    | None -> runtime_error "Make sure to run `Eval.init program` first"
-    | Some x -> x
-
 let pp_mailbox_entry ppf (refcount, messages) =
   let pp_message ppf (tag, payloads) =
     Format.fprintf ppf "%s(%a)" tag
@@ -469,7 +439,13 @@ let lookup_lambda name refcount_map =
     | None -> runtime_error
       (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)
 
-let step_current state =
+let rec step_current runtime state =
+  let return comp_state value : unit =
+    Runtime.yield runtime (fun () ->
+      step_current runtime 
+        { comp_state with current_comp = WithIrMetadata.make (Ir.Return value) }
+    )
+  in
   match state.computations with
   | [] ->
     (* If there aren't any computations, and also nothing is blocked, then program has 
@@ -604,11 +580,14 @@ let step_current state =
         let current' = { current with current_comp = return_unit_value } in
         Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
       | New _ ->
+        return (Runtime.new_mailbox runtime)
+        (*
         let runtime_name = RuntimeName.make_mailbox () in
         let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
         let return_name = mk_name runtime_name in
         finish_current_with_mailboxes { current with current_comp =
         WithIrMetadata.make (Return return_name) } mailboxes
+        *)
       | Send { target; message; iname = _ } ->
         let target_var = variable_name_from_target target in
         let runtime_name = runtime_name_of_value (lookup_env current.env target_var) in

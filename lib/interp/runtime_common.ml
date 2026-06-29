@@ -78,21 +78,3 @@ type value_env = RuntimeValue.value_env
 
 type runtime_message = (Ir.message_tag * RuntimeValue.t list)
 
-type environment = value_env
-
-type computation_frame =
-  | SeqFrame of {
-    saved_env: environment;
-    next_comp: comp;
-  }
-  | LetFrame of {
-    binder: Var.t;
-    saved_env: environment;
-    next_comp: comp;
-  }
-
-type computation_state = {
-  current_comp: comp;
-  env: environment;
-  stack: computation_frame list
-}

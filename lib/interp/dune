@@ -1,6 +1,6 @@
 (library (name interp)
  (public_name mbcheck.interp)
- (libraries util common eio)
+ (libraries util common eio eio_main)
  (preprocess ( staged_pps ppx_import visitors.ppx ppx_deriving.show))
  ; w17: Virtual method unimplemented, incompatible with fold visitor
  ; w34: Unused type declarations (visitors)

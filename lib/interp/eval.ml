@@ -15,8 +15,6 @@ let get_fvs = WithIrMetadata.fvs
 let with_val_fvs value = WithIrMetadata.make ~fvs:(get_fvs value)
 
 let unit_value = WithIrMetadata.make (Tuple [])
-let return_unit_value =
-	WithIrMetadata.make (Return (WithIrMetadata.make (Tuple [])))
 let mk_const c = WithIrMetadata.make (Constant c)
 let mk_name a = WithIrMetadata.make (Name a)
 
@@ -42,6 +40,10 @@ type computation_state = {
   env: environment;
   stack: computation_frame list
 }
+
+type step_result =
+  | Stepped of computation_state
+  | Finished
 
 let lookup_env env var =
   match VarMap.find_opt var env with
@@ -73,6 +75,19 @@ let rec runtime_name_of_value env value =
     runtime_error
       (Format.asprintf "Expected a mailbox runtime name value, got: %a" RuntimeValue.pp v)
 
+let runtime_name_of_runtime_value value =
+  match value with
+  | RuntimeValue.Name runtime_name -> Some runtime_name
+  | _ -> None
+
+let lookup_runtime_names env vars =
+  List.filter_map
+    (fun (var, count) ->
+      match lookup_env env var |> runtime_name_of_runtime_value with
+      | None -> None
+      | Some name -> Some (name, count))
+    vars
+
 let remove_first_tagged_message tag messages =
   let rec aux prefix = function
     | [] -> None
@@ -93,11 +108,14 @@ let decl_map program =
     program.prog_decls
 
 
-let install_seq_frame saved_env next_comp current =
-  { state with stack = SeqFrame { saved_env; next_comp } :: current.stack }
+let init_state program comp =
+  { program; current_comp = comp; env = VarMap.empty; stack = [] }
 
-let install_let_frame binder saved_env next_comp current =
-  { state with stack = LetFrame { binder; saved_env; next_comp } :: current.stack }
+let install_seq_frame saved_env next_comp state =
+  { state with stack = SeqFrame { saved_env; next_comp } :: state.stack }
+
+let install_let_frame binder saved_env next_comp state =
+  { state with stack = LetFrame { binder; saved_env; next_comp } :: state.stack }
 
 (* Handles a Return given the stack. Binds a value in a LetFrame, not in a SeqFrame.*)
   (*
@@ -124,32 +142,27 @@ let pop_frame_with_value value current =
     end
   *)
 
-let handle_return value current state =
+let handle_return runtime state value =
   (* We can only store a closed runtime value in the environment, so we need to substitute any FVs. *)
   let forced = force_value state.env value in
   let irv = runtime_of_ir state.env value in
-  match (get_node forced, current.stack) with
-    | (_, []) -> 
-      (* Nothing to return; thread terminated *)
-      inc_step { state with computations = rest }
+  match (get_node forced, state.stack) with
+    | (_, []) -> Finished
     | (_, SeqFrame { saved_env; next_comp } :: other_frames) ->
-      update_computation { current_comp = next_comp; env = saved_env; stack = other_frames }
+      Stepped { state with current_comp = next_comp; env = saved_env; stack = other_frames }
     | (Lam _, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
       (* If we're returning a function or constructor, we need to generate a new 
           function runtime name, store in the reference counted heap,
           and return this instead of the lambda binding. *)
-      let new_ref = RuntimeName.make_value () in
-      let refc_val_map =
-        RuntimeNameMap.add new_ref (1, irv) state.reference_counted_values
-      in
+      
+      let new_ref = Runtime.record_value runtime irv in
       let env' =
         VarMap.add binder (RuntimeValue.Name new_ref) saved_env
       in
-      let new_comp_state = { current_comp = next_comp; env = env'; stack = other_frames } in
-      inc_step { state with computations = new_comp_state :: rest; reference_counted_values = refc_val_map }
+      Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
     | (_, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
       let env' = VarMap.add binder irv saved_env in
-      update_computation { current_comp = next_comp; env = env'; stack = other_frames }
+      Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
 
 let rec bind_many env binders values =
   match binders, values with
@@ -158,13 +171,19 @@ let rec bind_many env binders values =
     bind_many (VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env) binders values
   | _ -> runtime_error "Arity mismatch while binding values"
 
+
+let bind env binder value =
+  VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env
+
 let rec find_empty_guard guards =
   match guards with
-  | [] -> None
+  (* Shouldn't happen in a well-typed program -- must always have an empty guard
+     if there's the possibility that a mailbox will be empty *)
+  | [] -> runtime_error "No messages available but no 'empty' guard."
   | guard :: rest ->
     begin
       match get_node guard with
-      | Empty (mailbox_binder, cont) -> Some (mailbox_binder, cont)
+      | Empty (mailbox_binder, cont) -> (mailbox_binder, cont)
       | _ -> find_empty_guard rest
     end
 
@@ -401,16 +420,19 @@ let apply_primitive prim env args =
     runtime_error (Printf.sprintf "Unknown primitive '%s'" prim)
 
 let rec step_current runtime state =
-  let finish_current state =
-    Runtime.yield runtime (fun () ->
-      step_current runtime state
-    ) 
+  let finish_current state = Stepped state
   in
   let step_to comp_state next =
     finish_current { comp_state with current_comp = next }
   in
-  let return comp_state value : unit =
+  let return comp_state value =
     step_to comp_state (WithIrMetadata.make (Ir.Return value))
+  in
+  let return_unit_value =
+    WithIrMetadata.make (Return (WithIrMetadata.make (Tuple [])))
+  in
+  let return_unit comp_state =
+    return comp_state (WithIrMetadata.make (Tuple []))
   in
   match get_node state.current_comp with
     | Annotate (comp, _) ->
@@ -431,7 +453,7 @@ let rec step_current runtime state =
       finish_current next_current
     (* Return: subcomputation has finished. Inspect stack; if there's a continuation
         then evaluate that, otherwise the thread's finished. *)
-    | Return value -> return state value
+    | Return value -> handle_return runtime state value
     (* App: Check whether applying a primitive or variable. If a primitive, handle separately.
         If a variable, looks up in declarations; if a primitive, handles directly *)
     | App { func; args } ->
@@ -519,15 +541,13 @@ let rec step_current runtime state =
           (Format.asprintf "Expected list value for case-list analysis, got: %a" pp_value (force_value state.env term))
       end
     | Dup vars ->
-      let (mailboxes, _) = apply_refcount_delta state.env state.mailboxes vars [] 1 in
-      finish_current_with_mailboxes { state with current_comp = return_unit_value } mailboxes
+      let names = lookup_runtime_names state.env vars in
+      Runtime.dup runtime names;
+      return_unit state
     | Drop { vars; names } ->
-      (* After doing the reference updates, we might have some blocked processes that we can awake,
-          due to Empty references becoming fireable *)
-      let (mailboxes, to_wake) = apply_refcount_delta state.env state.mailboxes vars names (-1) in
-      let (blocked, computations) = enqueue_unblocked_many state.blocked rest to_wake in
-      let current' = { state with current_comp = return_unit_value } in
-      Some (inc_step { state with computations = current' :: computations; blocked; mailboxes } )
+      let var_names = lookup_runtime_names state.env vars in
+      Runtime.drop runtime (var_names @ names);
+      return_unit state
     | New _ -> return state (WithIrMetadata.make <| Ir.Name (Runtime.new_mailbox runtime))
       (*
       let runtime_name = RuntimeName.make_mailbox () in
@@ -539,10 +559,25 @@ let rec step_current runtime state =
     | Send { target; message = (tag, payloads); iname = _ } ->
       let mb_name = runtime_name_of_value state.env target in
       let runtime_message = (tag, List.map (RuntimeValue.of_ir state.env) payloads) in
-      Runtime.send runtime mb_name runtime_message
+      Runtime.send runtime mb_name runtime_message;
+      return_unit state
     | Guard { target; pattern = _; guards; iname = _ } ->
-      let target_var = variable_name_from_target target in
-      let runtime_name = runtime_name_of_value (lookup_env state.env target_var) in
+      let mb_name = runtime_name_of_value state.env target in
+      let tags = List.concat_map (fun g ->
+        match get_node g with
+          | Receive recv -> [recv.tag]
+          | _ -> []
+        ) guards
+      in
+      begin
+        match Runtime.await_message runtime mb_name tags with
+        | Some msg -> failwith "TODO: evaluate free guard"
+        | None ->
+            let (bnd, cont) = find_empty_guard guards in
+            let env' = bind state.env bnd (WithIrMetadata.make (Name mb_name)) in
+            finish_current { state with env = env'; current_comp = cont } 
+      end
+      (*
       begin
         match RuntimeNameMap.find_opt runtime_name state.mailboxes with
         | None ->
@@ -562,6 +597,7 @@ let rec step_current runtime state =
               Some { state with computations = rest; blocked; step_count = 0 }
           end
       end
+      *)
     | Free (target, _iname) ->
       let rt_name = RuntimeValue.of_ir target |> runtime_name_of_value in
 
@@ -587,22 +623,19 @@ let rec step_current runtime state =
           runtime_error
             (Format.asprintf "Free target mailbox %a does not exist" RuntimeName.pp runtime_name)
       end
-    | Spawn comp -> Runtime.spawn (fun () -> step (init_state comp))
+    | Spawn comp ->
+      Runtime.spawn runtime
+        (fun () -> step runtime (init_state state.program comp));
+      return_unit state
       (*
       let spawned = { current_comp = comp; env = state.env; stack = [] } in
       let current' = { state with current_comp = return_unit_value } in
       Some (inc_step { state with computations = current' :: (rest @ [spawned]) })
       *)
-  end
-and step state =
-  if is_finished state then
-    Finished
-  else
-    let state =
-      if state.step_count > max_steps_before_yield then
-        { state with step_count = 0; computations = rotate_computations state.computations }
-      else state
-    in
-    match step_current state with
-    | None -> Finished
-    | Some stepped -> Stepped stepped
+and step runtime state =
+  match step_current runtime state with
+    | Stepped updated_state ->
+        Runtime.yield runtime (fun () ->
+          step runtime updated_state
+        ) 
+    | Finished -> ()

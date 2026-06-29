@@ -88,6 +88,58 @@ let pp_mailbox_entry ppf (refcount, messages) =
     (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ") pp_message)
     messages
 
+let update_mailbox_refcount runtime to_wake mb count sign =
+  if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
+  match Hashtbl.find_opt runtime.mailboxes mb with
+  | None ->
+    runtime_error
+      (Format.asprintf "Mailbox %a missing during reference-count update" RuntimeName.pp mb)
+  | Some (refcount, messages) ->
+    let next_refcount = refcount + (sign * count) in
+    if next_refcount <= 0 then
+      runtime_error
+        (Format.asprintf "Mailbox %a reference count became below-zero: %a"
+          RuntimeName.pp mb pp_mailbox_entry (refcount, messages));
+    Hashtbl.replace runtime.mailboxes mb (next_refcount, messages);
+    if next_refcount = 1 then mb :: to_wake else to_wake
+
+let update_value_refcount runtime name count sign =
+  if count < 0 then runtime_error "Negative reference-count adjustment is invalid";
+  match Hashtbl.find_opt runtime.reference_counted_values name with
+  | None ->
+    runtime_error
+      (Format.asprintf "Value reference %a missing during reference-count update" RuntimeName.pp name)
+  | Some (refcount, value) ->
+    let next_refcount = refcount + (sign * count) in
+    if next_refcount < 0 then
+      runtime_error
+        (Format.asprintf "Value reference %a reference count became below-zero: %d" RuntimeName.pp name next_refcount)
+    else if next_refcount = 0 then
+      Hashtbl.remove runtime.reference_counted_values name
+    else
+      Hashtbl.replace runtime.reference_counted_values name (next_refcount, value)
+
+let apply_refcount_delta runtime names sign =
+  List.fold_left
+    (fun to_wake (name, count) ->
+      match name with
+      | RuntimeName.MailboxName _ -> update_mailbox_refcount runtime to_wake name count sign
+      | RuntimeName.ValueName _ ->
+        update_value_refcount runtime name count sign;
+        to_wake)
+    []
+    names
+
+let wake_blocked_many runtime to_wake =
+  List.iter
+    (fun runtime_name ->
+      match Hashtbl.find_opt runtime.blocked runtime_name with
+      | None -> ()
+      | Some wakeup ->
+        Hashtbl.remove runtime.blocked runtime_name;
+        Promise.resolve wakeup ())
+    to_wake
+
 let run (program : program) (callback: t -> unit) : unit = 
   Eio_main.run (fun _env ->
     let final_blocked =
@@ -151,8 +203,14 @@ let yield (runtime : t) (callback: unit -> unit) =
   else
     runtime.step_count := cur_steps + 1;
     callback ()
-let dup (_runtime : t) (_counts : (RuntimeName.t * int) list) : unit = failwith "TODO"
-let drop (_runtime : t) (_counts : (RuntimeName.t * int) list) : unit = failwith "TODO"
+
+let dup (runtime : t) (counts : (RuntimeName.t * int) list) : unit =
+  let to_wake = apply_refcount_delta runtime counts 1 in
+  wake_blocked_many runtime to_wake
+
+let drop (runtime : t) (counts : (RuntimeName.t * int) list) : unit =
+  let to_wake = apply_refcount_delta runtime counts (-1) in
+  wake_blocked_many runtime to_wake
 
 let lookup_lambda runtime name =
   match Hashtbl.find_opt runtime.reference_counted_values name with
@@ -174,3 +232,8 @@ let lookup_lambda runtime name =
       end
     | None -> runtime_error
       (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)
+
+let record_value runtime rt_val =
+  let new_ref = RuntimeName.make_value () in
+  Hashtbl.add runtime.reference_counted_values new_ref (1, rt_val);
+  new_ref

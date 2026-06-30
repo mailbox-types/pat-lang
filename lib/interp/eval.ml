@@ -511,7 +511,8 @@ and step runtime state =
         Runtime.yield runtime (fun () ->
           step runtime updated_state
         ) 
-    | Finished -> ()
+    | Finished -> 
+        Runtime.finish_thread runtime
 
 let run_program program =
   Runtime.run program (fun runtime ->

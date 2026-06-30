@@ -21,8 +21,17 @@ type t = {
   blocked: blocked_state;
   mailboxes: mailbox_state;
   reference_counted_values: (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t;
+  thread_count: int ref;
   step_count: int ref
 }
+
+let block_thread runtime mailbox_name =
+  if Hashtbl.length runtime.blocked + 1 >= !(runtime.thread_count) then
+    runtime_error "Deadlock! All running threads are blocked."
+  else
+    let (wait_for_retry, wakeup) = Promise.create () in
+    let () = Hashtbl.replace runtime.blocked mailbox_name wakeup in
+    Promise.await wait_for_retry
 
 let max_step_count = 20
 
@@ -94,7 +103,6 @@ let wake_blocked_many runtime to_wake =
 
 let run (program : program) (callback: t -> unit) : unit = 
   Eio_main.run (fun env ->
-    let final_blocked =
       Eio.Switch.run (fun switch ->
         let state = {
           program;
@@ -103,21 +111,16 @@ let run (program : program) (callback: t -> unit) : unit =
           blocked = Hashtbl.create 128;
           mailboxes = Hashtbl.create 128;
           reference_counted_values = Hashtbl.create 128;
+          thread_count = ref 1;
           step_count = ref 0
         } in
         Random.self_init ();
-        Fiber.fork ~sw:switch (fun () -> callback state);
-        state.blocked
+        Fiber.fork ~sw:switch (fun () -> callback state)
       )
-    in
-    (* Switch will block until everything has finished.
-       We now just need to check to see whether any threads 
-       remain blocked (this would be a deadlock) *)
-    if (not (Hashtbl.length final_blocked = 0)) then
-      runtime_error "No runnable computations remain (deadlock or blocked system)"
   )
 
 let spawn (runtime : t) (callback: unit -> unit) : unit =
+  incr runtime.thread_count;
   Eio.Fiber.fork ~sw:runtime.switch (fun () -> callback ())
 
 let new_mailbox (runtime : t) : RuntimeName.t =
@@ -133,9 +136,7 @@ let rec free_mailbox (runtime : t) (mailbox : RuntimeName.t) : unit =
   | Some (1, []) ->
     Hashtbl.remove runtime.mailboxes mailbox
   | Some (refcount, _) when refcount > 1 ->
-    let (wait_for_retry, wakeup) = Promise.create () in
-    Hashtbl.replace runtime.blocked mailbox wakeup;
-    Promise.await wait_for_retry;
+    block_thread runtime mailbox;
     free_mailbox runtime mailbox
   | Some entry ->
     runtime_error
@@ -159,9 +160,7 @@ let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag li
           Some msg
         (* If not, we need to block and re-check *)
         | None ->
-          let (wait_for_retry, wakeup) = Promise.create () in
-          Hashtbl.replace runtime.blocked name wakeup;
-          Promise.await wait_for_retry;
+          block_thread runtime name;
           await_message runtime name tags
     end
 
@@ -237,3 +236,5 @@ let record_value runtime rt_val =
   let new_ref = RuntimeName.make_value () in
   Hashtbl.add runtime.reference_counted_values new_ref (1, rt_val);
   new_ref
+
+let finish_thread runtime = decr runtime.thread_count

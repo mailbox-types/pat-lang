@@ -24,3 +24,4 @@ val drop : t -> (Ir.RuntimeName.t * int) list -> unit
 val lookup_lambda : t -> Ir.RuntimeName.t -> (Ir.lambda * Ir.VarSet.t * value_env)
 (* Records a value for reference counting, returning a runtime name *)
 val record_value : t -> RuntimeValue.t -> Ir.RuntimeName.t
+val finish_thread : t -> unit

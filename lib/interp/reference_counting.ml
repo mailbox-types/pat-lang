@@ -292,7 +292,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                     (* impossible; transform_val_sequence always gives the same number of values back *)
                     | _ -> assert false
             end
-        | Free (v, iname) -> (* DONE *)
+        | Free (v, iname) ->
             let (dups, v') = ircv borrowed owned v in
             Ir.insert_dup dups (WithIrMetadata.make ~fvs:(get_fvs v') (Free (v', iname)))
         | Guard { target; pattern; guards; iname } ->
@@ -506,6 +506,14 @@ let insert_reference_counting prog =
         let body_fvs = get_fvs decl.decl_body in
         let (used_params, unused_params) =
             List.partition (fun v -> VarSet.mem v body_fvs) parameter_vars
+        in
+        let () =
+            Format.printf
+                "decl %s body_fvs: %a, used_params: %a, unused_params: %a\n"
+                (Binder.name decl.decl_name)
+                VarSet.pp body_fvs
+                (Format.pp_print_list Var.pp) used_params
+                (Format.pp_print_list Var.pp) unused_params
         in
         let body_owned_vars = used_params |> Ir.VarSet.of_list in
         let body_trans =

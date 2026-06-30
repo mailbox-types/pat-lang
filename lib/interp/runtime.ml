@@ -74,7 +74,8 @@ let apply_refcount_delta runtime names sign =
   List.fold_left
     (fun to_wake (name, count) ->
       match name with
-      | RuntimeName.MailboxName _ -> update_mailbox_refcount runtime to_wake name count sign
+      | RuntimeName.MailboxName _ ->
+        update_mailbox_refcount runtime to_wake name count sign
       | RuntimeName.ValueName _ ->
         update_value_refcount runtime name count sign;
         to_wake)
@@ -171,9 +172,9 @@ let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.
       (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
   | Some (refcount, messages) ->
     let next_refcount = refcount - 1 in
-    if next_refcount < 0 then
+    if next_refcount < 1 then
       runtime_error
-        (Format.asprintf "Mailbox %a reference count became negative after send: %a"
+        (Format.asprintf "Mailbox %a reference count became < 1 after send: %a"
           RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
     Hashtbl.replace runtime.mailboxes runtime_name (next_refcount, messages @ [message]);
     begin
@@ -184,16 +185,24 @@ let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.
         Promise.resolve wakeup ()
     end
 
-let sleep (_runtime : t) (_duration : int) : unit = ()
+let sleep (runtime : t) (duration : int) : unit =
+  let duration_float = (float_of_int duration) /. 1000.0 in
+  Eio.Time.sleep (Eio.Stdenv.clock runtime.env) duration_float
+
 (* Called after each computation step. May potentially yield to another thread. *)
 let yield (runtime : t) (callback: unit -> unit) =
   let cur_steps = !(runtime.step_count) in
   if cur_steps > max_step_count then
-    let () = runtime.step_count := 0 in
-    Eio.Fiber.yield ()
-  else
-    runtime.step_count := cur_steps + 1;
-    callback ()
+    begin
+      runtime.step_count := 0;
+      Eio.Fiber.yield ();
+      callback ()
+    end
+  else 
+    begin
+      runtime.step_count := cur_steps + 1;
+      callback ()
+    end
 
 let dup (runtime : t) (counts : (RuntimeName.t * int) list) : unit =
   let to_wake = apply_refcount_delta runtime counts 1 in

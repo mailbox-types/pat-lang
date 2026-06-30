@@ -224,7 +224,7 @@ let bool_const b =
 let string_const s =
   mk_const (Constant.String s)
 
-let apply_primitive prim env args =
+let apply_primitive runtime prim env args =
   match prim with
   | "+" ->
     expect_arity prim 2 args;
@@ -344,8 +344,16 @@ let apply_primitive prim env args =
     bool_const (Random.bool ())
   | "sleep" ->
     expect_arity prim 1 args;
+    begin
+      match args with
+      | [x] ->
+        let duration = int_of_value env x in
+        if duration <= 0 then runtime_error "Primitive 'sleep' expects a positive integer duration";
+        Runtime.sleep runtime duration;
+        unit_value
+      | _ -> assert false
+    end
     (* Intentionally a no-op for now *)
-    unit_value
   | "intToString" ->
     expect_arity prim 1 args;
     begin
@@ -396,7 +404,7 @@ let rec step_current runtime state =
       begin
         match get_node func with
         | Primitive prim ->
-          let result = apply_primitive prim state.env args in
+          let result = apply_primitive runtime prim state.env args in
           finish_current { state with current_comp = with_val_fvs result (Return result) }
         | Variable (var, _) ->
           let decls = decl_map state.program in
@@ -545,7 +553,10 @@ let rec step_current runtime state =
       return_unit state
     | Spawn comp ->
       Runtime.spawn runtime
-        (fun () -> step runtime (init_state state.program comp));
+        (fun () -> 
+          let st = { program = state.program; current_comp = comp;
+                     env = state.env; stack = [] } in
+          step runtime st);
       return_unit state
 and step runtime state =
   match step_current runtime state with

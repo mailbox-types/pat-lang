@@ -113,8 +113,7 @@ let rec find_first_matching_message tags mailbox =
           (* Mailbox doesn't contain any message for guards; continue *)
           | None -> find_first_matching_message rest mailbox
           (* Mailbox contains message for guard; return payloads and remaining messages *)
-          | Some (msg, remaining_messages) ->
-            Some (msg, remaining_messages)
+          | Some (msg, remaining_messages) -> Some (msg, remaining_messages)
       end
 
 (* Find guard for a given tag. *)

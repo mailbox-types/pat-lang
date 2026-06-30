@@ -7,9 +7,6 @@ module Var = Ir.Var
 module VarSet = Ir.VarSet
 module WithIrMetadata = Ir.WithIrMetadata
 
-let is_decl_var (decls : Sugar_ast.decl list) (v : Ir.Var.t) =
-    List.exists (fun d -> String.equal d.Sugar_ast.decl_name (Ir.Var.name v)) decls
-
 (* Helper functions *)
 let get_fvs = WithIrMetadata.fvs
 let with_fvs ?(pos = Position.dummy) fvs v = WithIrMetadata.make ~pos ~fvs v
@@ -28,11 +25,20 @@ let no_fvs ?(pos = Position.dummy) v = WithIrMetadata.make ~pos ~fvs:(VarSet.emp
  * on the fly a little later.
  *)
 
-(* Maps Strings (source-level variables) to IR variables (Ir.Var) *)
-type env = { var_env: Ir.Var.t stringmap }
-let empty_env = { var_env = StringMap.empty }
+(* Maps source-level variable names to runtime IR variables.
+   decl_var_env stores top-level declaration variables. *)
+type env = {
+    var_env: Ir.Var.t stringmap;
+    decl_var_env: Ir.Var.t stringmap;
+}
 
-let bind_var bnd env = { var_env = StringMap.add (Ir.Binder.name bnd) (Ir.Var.of_binder bnd) (env.var_env) }
+let empty_env = { var_env = StringMap.empty; decl_var_env = StringMap.empty }
+
+let is_decl_var env (v : Ir.Var.t) =
+    StringMap.exists (fun _ decl_v -> decl_v = v) env.decl_var_env
+
+let bind_var bnd env =
+    { env with var_env = StringMap.add (Ir.Binder.name bnd) (Ir.Var.of_binder bnd) (env.var_env) }
 
 let bind_vars bnds env = List.fold_left (fun acc bnd -> bind_var bnd acc) env bnds
 
@@ -72,7 +78,8 @@ let rec transform_prog :
         (env -> Ir.program -> Ir.program) -> Ir.program =
             fun env {prog_interfaces; prog_decls; prog_body} k ->
     let stripped_decls = List.map WithPos.node prog_decls in
-    let (bnds, env') = add_names env (fun d -> d.Sugar_ast.decl_name) stripped_decls in
+            let (bnds, env_with_decls) = add_names env (fun d -> d.Sugar_ast.decl_name) stripped_decls in
+            let env' = { env_with_decls with decl_var_env = env_with_decls.var_env } in
     let decls = stripped_decls in
     {
         prog_interfaces = List.map (WithPos.node) prog_interfaces;
@@ -125,7 +132,7 @@ and transform_expr :
            returns IR variable *)
         | Var v ->
             let v = lookup_var v env in
-            let fvs = if is_decl_var decls v then VarSet.empty else VarSet.singleton v in
+            let fvs = if is_decl_var env v then VarSet.empty else VarSet.singleton v in
             with_fvs fvs (Ir.Return (with_fvs fvs (Ir.Variable (v, None)))) |> k env
         (* Primitives are implicitly globally bound *)
         | Primitive x -> no_fvs (Ir.Return (no_fvs (Ir.Primitive x))) |> k env
@@ -167,7 +174,7 @@ and transform_expr :
             (* Transform M under *old* environment *)
             (* The continuation *)
             transform_expr decls env term
-                (fun env c ->
+                (fun env term_comp ->
                     (* Bind it in the environment *)
                     let env' = bind_var bnd env in
                     (* FVs of let: fvs(c) U fvs(cont - bnd) *)
@@ -175,14 +182,14 @@ and transform_expr :
                     let bnd_var = Var.of_binder bnd in
                     let fvs =
                         VarSet.union
-                            (get_fvs c)
+                            (get_fvs term_comp)
                             (VarSet.diff (get_fvs cont) (VarSet.singleton bnd_var))
                     in
                     with_fvs fvs (
                     Ir.Let {
                         binder = bnd;
-                        term = c;
-                        cont = transform_expr decls env' body k }))
+                        term = term_comp;
+                        cont }))
         | Tuple es ->
             transform_exprs decls env es (fun _ vs ->
                 let fvs = VarSet.union_many (List.map (get_fvs) vs) in
@@ -339,7 +346,7 @@ and transform_syntactic_value
     match WithPos.node x with
         | Var var ->
              let v = lookup_var var env in
-                             let fvs = if is_decl_var decls v then VarSet.empty else VarSet.singleton v in
+                            let fvs = if is_decl_var env v then VarSet.empty else VarSet.singleton v in
                Some (with_fvs fvs @@ Ir.Variable (v, None))
         | Atom x -> Some (no_fvs @@ Ir.Atom x)
         | Primitive x -> Some (no_fvs @@ Ir.Primitive x)

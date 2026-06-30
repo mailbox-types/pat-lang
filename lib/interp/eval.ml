@@ -105,31 +105,6 @@ let install_seq_frame saved_env next_comp state =
 let install_let_frame binder saved_env next_comp state =
   { state with stack = LetFrame { binder; saved_env; next_comp } :: state.stack }
 
-(* Handles a Return given the stack. Binds a value in a LetFrame, not in a SeqFrame.*)
-  (*
-let pop_frame_with_value value current =
-  match current.stack with
-  | [] -> None
-  | frame :: rest ->
-    begin
-      match frame with
-      | SeqFrame { saved_env; next_comp } ->
-        Some { current_comp = next_comp; env = saved_env; stack = rest }
-      | LetFrame { binder; saved_env; next_comp } ->
-        (* If we're returning a function or constructor, we need to generate a new 
-           function runtime name, store in the reference counted heap,
-           and return this instead of the lambda binding. *)
-        begin
-          match get_node value with
-            | Lam blah ->
-
-            | _ ->
-              let env' = VarMap.add binder value saved_env in
-              Some { current_comp = next_comp; env = env'; stack = rest }
-        end
-    end
-  *)
-
 let handle_return runtime state value =
   (* We can only store a closed runtime value in the environment, so we need to substitute any FVs. *)
   let forced = force_value state.env value in
@@ -491,13 +466,6 @@ let rec step_current runtime state =
       Runtime.drop runtime (var_names @ names);
       return_unit state
     | New _ -> return state (WithIrMetadata.make <| Ir.Name (Runtime.new_mailbox runtime))
-      (*
-      let runtime_name = RuntimeName.make_mailbox () in
-      let mailboxes = RuntimeNameMap.add runtime_name (1, []) state.mailboxes in
-      let return_name = mk_name runtime_name in
-      finish_current_with_mailboxes { state with current_comp =
-      WithIrMetadata.make (Return return_name) } mailboxes
-      *)
     | Send { target; message = (tag, payloads); iname = _ } ->
       let mb_name = runtime_name_of_value state.env target in
       let runtime_message = (tag, List.map (RuntimeValue.of_ir state.env) payloads) in
@@ -526,27 +494,6 @@ let rec step_current runtime state =
             let env' = bind bnd (WithIrMetadata.make (Name mb_name)) state.env in
             finish_current { state with env = env'; current_comp = cont } 
       end
-      (*
-      begin
-        match RuntimeNameMap.find_opt runtime_name state.mailboxes with
-        | None ->
-          runtime_error
-            (Format.asprintf "Guard target mailbox %a does not exist" RuntimeName.pp runtime_name)
-        | Some ((refcount, _) as mailbox) ->
-          begin
-            match evaluate_guard runtime_name state.env guards mailbox with
-            | Some (next_env, next_comp, remaining_messages) ->
-              let mailboxes =
-                RuntimeNameMap.add runtime_name (refcount, remaining_messages) state.mailboxes
-              in
-              let current' = { state with current_comp = next_comp; env = next_env } in
-              Some (inc_step { state with computations = current' :: rest; mailboxes })
-            | None ->
-              let blocked = RuntimeNameMap.add runtime_name current state.blocked in
-              Some { state with computations = rest; blocked; step_count = 0 }
-          end
-      end
-      *)
     | Free (target, _iname) ->
       let rt_name = runtime_name_of_value state.env target in
       Runtime.free_mailbox runtime rt_name;

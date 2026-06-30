@@ -30,10 +30,8 @@ let typecheck p ir =
     let ir = Ir.substitute_solution solution ir in
     let () =
         if Settings.(get eval) then
-            ir
-            |> with_reference_counting
-            |> Interp.Eval.run_to_completion
-            |> ignore
+            let rc_ir = with_reference_counting ir in
+            Interp.Eval.run_program rc_ir
     in
     (p, prety_opt, ir, ty, env, constrs)
 

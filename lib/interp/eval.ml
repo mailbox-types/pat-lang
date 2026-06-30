@@ -3,7 +3,6 @@ open Common_types
 open Util.Utility
 open Ir
 open Runtime_common
-open Eio
 
 let max_steps_before_yield = 20
 
@@ -63,7 +62,7 @@ let rec normalise_function_value env value =
   | Variable (var, _) ->
     begin
       match VarMap.find_opt var env with
-      | Some bound -> force_value env (ir_of_runtime bound)
+      | Some bound -> ir_of_runtime bound
       | None -> value
     end
   | _ -> value
@@ -143,7 +142,6 @@ let handle_return runtime state value =
       (* If we're returning a function or constructor, we need to generate a new 
           function runtime name, store in the reference counted heap,
           and return this instead of the lambda binding. *)
-      
       let new_ref = Runtime.record_value runtime irv in
       let env' =
         VarMap.add binder (RuntimeValue.Name new_ref) saved_env
@@ -556,3 +554,9 @@ and step runtime state =
           step runtime updated_state
         ) 
     | Finished -> ()
+
+let run_program program =
+  Runtime.run program (fun runtime ->
+    match program.prog_body with
+    | None -> ()
+    | Some body -> step runtime (init_state program body))

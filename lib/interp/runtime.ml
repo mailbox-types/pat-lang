@@ -29,11 +29,6 @@ let max_step_count = 20
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
 
-let update_hashtable : ('a, 'b) Hashtbl.t -> ('b option -> 'b) -> 'a -> unit =
-  fun tbl updt key ->
-    let new_val = updt (Hashtbl.find_opt tbl key) in
-    Hashtbl.replace tbl key new_val
-
 let pp_mailbox_entry ppf (refcount, messages) =
   let pp_message ppf (tag, payloads) =
     Format.fprintf ppf "%s(%a)" tag
@@ -121,8 +116,8 @@ let run (program : program) (callback: t -> unit) : unit =
       runtime_error "No runnable computations remain (deadlock or blocked system)"
   )
 
-let spawn (runtime : t) (callback: t -> unit) : unit =
-  Eio.Fiber.fork ~sw:runtime.switch (fun () -> callback runtime)
+let spawn (runtime : t) (callback: unit -> unit) : unit =
+  Eio.Fiber.fork ~sw:runtime.switch (fun () -> callback ())
 
 let new_mailbox (runtime : t) : RuntimeName.t =
   let mailbox_name = RuntimeName.make_mailbox () in

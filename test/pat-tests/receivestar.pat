@@ -16,7 +16,8 @@ def main(): Unit {
     self ! Msg(other);
     guard other : Reply {
         receive Reply() from other ->
-            free(other)
+            free(other);
+            print("done")
     }
 }
 

@@ -11,9 +11,6 @@ let pp_varset ppf s =
     VarSet.iter (fun v -> Format.fprintf ppf "%a " Var.pp v) s;
     Format.pp_print_string ppf "}"
 
-let print_var_set note varset =
-    Format.printf "%s%a\n" note pp_varset varset
-
 let rec insert_reference_counting_comp decls borrowed owned comp =
     let irc = insert_reference_counting_comp decls in
     let ircv borrowed owned v = 
@@ -506,14 +503,6 @@ let insert_reference_counting prog =
         let body_fvs = get_fvs decl.decl_body in
         let (used_params, unused_params) =
             List.partition (fun v -> VarSet.mem v body_fvs) parameter_vars
-        in
-        let () =
-            Format.printf
-                "decl %s body_fvs: %a, used_params: %a, unused_params: %a\n"
-                (Binder.name decl.decl_name)
-                VarSet.pp body_fvs
-                (Format.pp_print_list Var.pp) used_params
-                (Format.pp_print_list Var.pp) unused_params
         in
         let body_owned_vars = used_params |> Ir.VarSet.of_list in
         let body_trans =

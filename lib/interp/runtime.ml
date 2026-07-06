@@ -28,11 +28,9 @@ type t = {
 let block_thread runtime mailbox_name =
   let len_plus_1 = Hashtbl.length runtime.blocked + 1 in
   let thread_count = !(runtime.thread_count) in
-  let () = Eio.traceln "len + 1: %d, thread count: %d\n" len_plus_1 thread_count in
   if len_plus_1 >= thread_count then
     runtime_error "Deadlock! All running threads are blocked."
   else
-    let () = Eio.traceln "blockingg\n" in
     let (wait_for_retry, wakeup) = Promise.create () in
     let () = Hashtbl.replace runtime.blocked mailbox_name wakeup in
     Promise.await wait_for_retry
@@ -50,6 +48,16 @@ let pp_mailbox_entry ppf (refcount, messages) =
   Format.fprintf ppf "(refcount=%d, messages=[%a])" refcount
     (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ") pp_message)
     messages
+
+let wake_blocked_many runtime to_wake =
+  List.iter
+    (fun runtime_name ->
+      match Hashtbl.find_opt runtime.blocked runtime_name with
+      | None -> ()
+      | Some wakeup ->
+        Hashtbl.remove runtime.blocked runtime_name;
+        Promise.resolve wakeup ())
+    to_wake
 
 let rec apply_refcount_delta runtime names sign =
   List.fold_left
@@ -90,27 +98,24 @@ and update_value_refcount runtime name count sign =
         (Format.asprintf "Value reference %a reference count became below-zero: %d" RuntimeName.pp name next_refcount)
     else if next_refcount = 0 then
       let () = Hashtbl.remove runtime.reference_counted_values name in
-      (*
-      TODO: Go from here -- this needs to recursively drop all FVs in the closure of the lambda.
       begin
         match value with
-          | RuntimeValue.Closure { lambda; _ } ->
-            lambda.
-          | _ -> ()
-        end
-        *)
+        | RuntimeValue.Closure { lambda; value_env } ->
+          let fv_runtime_names =
+            lambda.body
+            |> WithIrMetadata.fvs
+            |> VarSet.elements
+            |> List.filter_map (fun fv ->
+                match VarMap.find_opt fv value_env with
+                | Some (RuntimeValue.Name runtime_name) -> Some (runtime_name, 1)
+                | _ -> None)
+          in
+          let to_wake = apply_refcount_delta runtime fv_runtime_names (-1) in
+          wake_blocked_many runtime to_wake
+        | _ -> ()
+      end
     else
       Hashtbl.replace runtime.reference_counted_values name (next_refcount, value)
-
-let wake_blocked_many runtime to_wake =
-  List.iter
-    (fun runtime_name ->
-      match Hashtbl.find_opt runtime.blocked runtime_name with
-      | None -> ()
-      | Some wakeup ->
-        Hashtbl.remove runtime.blocked runtime_name;
-        Promise.resolve wakeup ())
-    to_wake
 
 let run (program : program) (callback: t -> unit) : unit = 
   Eio_main.run (fun env ->
@@ -155,17 +160,14 @@ let rec free_mailbox (runtime : t) (mailbox : RuntimeName.t) : unit =
         RuntimeName.pp mailbox pp_mailbox_entry entry)
 
 let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag list) : runtime_message option =
-  Eio.traceln "awaiting\n";
   match Hashtbl.find_opt runtime.mailboxes name with
   | None ->
     runtime_error
       (Format.asprintf "Guard target mailbox %a does not exist" RuntimeName.pp name)
   (* If the mailbox is empty and has refcount 1, then we can trigger an empty guard. *)
   | Some (refcount, messages) when refcount = 1 && List.is_empty messages ->
-    Eio.traceln "triggering empty\n";
     None
   | Some (refcount, messages) ->
-    Eio.traceln "in refcount\n";
     (* Otherwise we need to check whether any messages in the mailbox are contained in the tag list *)
     begin
       match find_first_matching_message tags messages with
@@ -175,7 +177,6 @@ let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag li
           Some msg
         (* If not, we need to block and re-check *)
         | None ->
-          Eio.traceln "blocking\n";
           block_thread runtime name;
           await_message runtime name tags
     end

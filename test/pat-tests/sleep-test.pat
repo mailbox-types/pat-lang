@@ -10,9 +10,8 @@ def sleeperLoop(n: Int, count: Int, delay: Int): Unit {
 }
 
 def main(): Unit {
-    spawn { sleeperLoop(1, 10, 1000) };
-    spawn { sleeperLoop(2, 10, 500) };
-    spawn { sleeperLoop(3, 100, 100) }
+    spawn { sleeperLoop(1, 5, 200) };
+    spawn { sleeperLoop(2, 5, 100) }
 }
 
 main()

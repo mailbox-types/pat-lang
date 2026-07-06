@@ -400,10 +400,8 @@ let rec step_current runtime state =
         (* We've previously bound the function. Need to dup its FVs, drop a
           ref, extend the env with param -> arg mappings, and eval body *) 
         | Name name ->
-          Format.printf "applying lambda with name %a\n" RuntimeName.pp name;
           let (lambda, fvs, closure_env) = Runtime.lookup_lambda runtime name in
           let dup_cmd = WithIrMetadata.make (Ir.Dup (List.map (fun n -> (n, 1)) (VarSet.elements fvs))) in
-          Format.printf "applying lambda with name %a; dups: %a\n" RuntimeName.pp name VarSet.pp fvs;
           let drop_cmd = WithIrMetadata.make (Ir.Drop { vars = []; names = [ (name, 1) ] }) in
           let extended_env = bind_many (List.map fst lambda.parameters) args closure_env in
           let new_stack =

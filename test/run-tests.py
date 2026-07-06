@@ -2,6 +2,7 @@
 import sys
 import json
 import subprocess
+import re
 
 # Assumes the file is run from the tests directory, and that the executable
 # is located at "../mbcheck"
@@ -39,6 +40,10 @@ def run_tests(testsuite):
                 result = (result and stdout == test["stdout"])
             if "stderr" in test:
                 result = (result and stderr == test["stderr"])
+            if "stdout_regex" in test:
+                result = (result and re.fullmatch(test["stdout_regex"], stdout) is not None)
+            if "stderr_regex" in test:
+                result = (result and re.fullmatch(test["stderr_regex"], stderr) is not None)
 
             result_str = "PASS" if result else "FAIL"
             print(f"{test['name']}: ({result_str})")
@@ -51,9 +56,15 @@ def run_tests(testsuite):
                 if "stdout" in test:
                     print("  Expected stdout:", repr(test["stdout"]))
                     print("  Actual stdout:  ", repr(stdout))
+                if "stdout_regex" in test:
+                    print("  Expected stdout regex:", repr(test["stdout_regex"]))
+                    print("  Actual stdout:        ", repr(stdout))
                 if "stderr" in test:
                     print("  Expected stderr:", repr(test["stderr"]))
                     print("  Actual stderr:  ", repr(stderr))
+                if "stderr_regex" in test:
+                    print("  Expected stderr regex:", repr(test["stderr_regex"]))
+                    print("  Actual stderr:        ", repr(stderr))
 
     if "groups" in testsuite:
         for group in testsuite["groups"]:

@@ -7,6 +7,10 @@ module RuntimeMap = Map.Make(RuntimeName)
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
 
+(* A runtime value, i.e., a value that results from evaluation.
+   This includes closures (that capture their environment) and explicitly
+   doesn't include variables (as all runtime values will be closed).
+*)
 module RuntimeValue = struct
   type value_env = t VarMap.t
   and t =

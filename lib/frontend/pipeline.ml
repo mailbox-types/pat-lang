@@ -42,6 +42,6 @@ let pipeline p =
     let benchmark_count = Settings.(get benchmark) in
     let () =
         if benchmark_count >= 0 then
-            Benchmark.benchmark benchmark_count (fun () -> typecheck p ir)
+            Util.Benchmark.benchmark benchmark_count (fun () -> typecheck p ir)
     in
     typecheck p ir

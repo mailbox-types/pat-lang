@@ -4,8 +4,6 @@ open Type
 
 type t = (Pattern.t * Pattern.t)
 
-exception Trap of string
-
 let make p1 p2 = p1, p2
 
 let lhs = fst

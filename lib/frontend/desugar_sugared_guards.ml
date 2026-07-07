@@ -1,6 +1,6 @@
 (*
     free(x) |-> M ---> empty(x) |-> free(x)
-    fail(M)[A]    ---> guard e : 0 { fail[A] }
+    fail(M)[A]    ---> guard M : 0 { fail[A] }
  *)
 open Common
 

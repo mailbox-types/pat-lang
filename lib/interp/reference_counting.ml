@@ -46,7 +46,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 in
                 let fvs = VarSet.union (get_fvs e1_trans) (get_fvs e2_trans_with_drop) in
                 WithIrMetadata.make ~fvs (Let { binder; term = e1_trans; cont = e2_trans_with_drop })
-        | Seq (e1, e2) -> (* DONE *)
+        | Seq (e1, e2) ->
             (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
             let e2_owned = VarSet.inter owned (get_fvs e2) in
             (* e1_borrowed: borrowed env for typing e1. union of borrowed variables and e2_owned *)
@@ -59,7 +59,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let e2' = irc e2_borrowed e2_owned e2 in
             let fvs = VarSet.union (get_fvs e1') (get_fvs e2') in
             WithIrMetadata.make ~fvs (Seq (e1', e2'))
-        | Return v -> (* DONE *)
+        | Return v ->
             let (dups, v') = ircv borrowed owned v in
             let return_node = WithIrMetadata.make ~fvs:(get_fvs v') (Return v') in
             Ir.insert_dup dups return_node
@@ -259,12 +259,11 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 })
             in
             Ir.insert_dup dups translated_case_l
-        | New interface -> (* DONE *)
+        | New interface ->
             WithIrMetadata.make ~fvs:VarSet.empty (New interface)
-        | Spawn e -> (* DONE *)
+        | Spawn e ->
             (* This is an interesting one. We need any reference counting that's done inside the expression
-               to happen in the parent thread, **not** the spawned thread. 
-               I am trying this with a basic pattern match to rewire but will change if it needs to be more robust. *)
+               to happen in the parent thread, **not** the spawned thread. *)
             let counted_body = irc borrowed owned e in
             let unchanged = WithIrMetadata.make ~fvs:(get_fvs counted_body) (Spawn counted_body) in
             begin
@@ -317,12 +316,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
 (* Helper function to annotate an ordered sequence of values. We need to consider all subsequent
     variables used in a sequence as borrowed. The best way of doing this is to reverse the
     list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)
-    (* 
-    Issue: for some reason we don't get consumerRef3 as owned...?
-    consumerRef3 ! Msg() -->
-    (dup ("consumerRef3":1);
-           (consumerRef3 ! Msg();*)
-           (* WIP: Go from here, sort this out *)
 and transform_val_sequence decls borrowed owned vs =
     let rec transform_vals fvs_acc = function
         | [] -> ([], VarMultiset.empty)

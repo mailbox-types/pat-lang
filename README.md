@@ -18,7 +18,8 @@ Several core ideas of our typechecking algorithm originated in the following, bo
 
 ## Installation
 
-`Pat` is implemented in OCaml, a general-purpose functional programming language. OCaml can be installed by following these instructions.
+`Pat` is implemented in OCaml, a general-purpose functional programming language. As the interpreter uses the EIO library, Pat requires OCaml 5.
+OCaml can be installed by following these instructions.
 
 ### macOS
 
@@ -67,7 +68,7 @@ $ eval $(opam env --switch=default)
 `Pat` can be cloned from this GitHub repository as follows.
 
 ```bash
-$ git clone https://github.com/SimonJF/pat.git
+$ git clone https://github.com/mailbox-types/pat-lang
 ```
 
 The `Pat` type checker uses a number of OCaml libraries that should be installed prior to compiling it.
@@ -79,7 +80,7 @@ $ opam install dune menhir ppx_import visitors cmdliner z3 bag
 The type-checking tool can then be compiled using `make` after installing these dependencies.
 
 ```bash
-$ cd pat
+$ cd pat-lang
 $ make
 ```
 
@@ -158,12 +159,12 @@ There are various patterns:
   * M: a message with tag M
   * E + F: either pattern E or pattern F
   * E . F: pattern E or F in any order
-  * *E: many instances of pattern E
+  * E*: many instances of pattern E
 
 As a concrete example, the receive endpoint for an empty future can be given the
 type
 
-  ?(Put.*Get)
+  ?(Put.Get*)
 
 which states that the mailbox contains at most one Put message and many Get
 messages; this would rule out the invalid behaviour of sending two Put messages.

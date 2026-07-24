@@ -1,4 +1,4 @@
-# Pat: A typechecker and interpreter for the Pat language
+# The Pat Programming Language
 
 ## About
 This project is a typechecker and interpreter for the Pat programming language, introduced in the paper

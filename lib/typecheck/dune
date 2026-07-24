@@ -1,5 +1,5 @@
 (library (name typecheck)
- (public_name mbcheck.typecheck)
+ (public_name pat.typecheck)
  (preprocess ( pps visitors.ppx ppx_deriving.show))
  (libraries common util bag z3)
  (modules :standard)

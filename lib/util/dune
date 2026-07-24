@@ -1,4 +1,4 @@
 (library (name util)
- (public_name mbcheck.util)
+ (public_name pat.util)
  (libraries unix)
 )

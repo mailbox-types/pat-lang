@@ -481,7 +481,7 @@ let rec step_current runtime state =
       in
       begin
         match Runtime.await_message runtime mb_name tags with
-        | Some (tag, rt_vals) ->
+        | Received (tag, rt_vals) ->
             let recv_guard = find_receive_guard tag guards in
             let env' =
               state.env
@@ -489,7 +489,7 @@ let rec step_current runtime state =
               |> bind recv_guard.mailbox_binder (WithIrMetadata.make (Name mb_name))
             in
             finish_current { state with env = env'; current_comp = recv_guard.cont } 
-        | None ->
+        | Freed ->
             let (bnd, cont) = find_empty_guard guards in
             let env' = bind bnd (WithIrMetadata.make (Name mb_name)) state.env in
             finish_current { state with env = env'; current_comp = cont } 

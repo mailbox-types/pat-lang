@@ -28,13 +28,13 @@ BENCHMARKS =\
 
 # Tries to run in strict mode -- returns True if it works, False otherwise
 def try_strict(path):
-    return subprocess.run(["./mbcheck", "--mode=strict", path],\
+    return subprocess.run(["./pat", "--mode=strict", path],\
                           capture_output=True).returncode == 0
 
 def run_benchmark(name, path):
     print("Running example " + name)
     is_strict = try_strict(path)
-    time = str(subprocess.run(["./mbcheck", "-b", str(REPETITIONS), path],\
+    time = str(subprocess.run(["./pat", "-b", str(REPETITIONS), path],\
                               capture_output=True, text=True).stdout)
     return (name, is_strict, time)
 

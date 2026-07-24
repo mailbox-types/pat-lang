@@ -15,7 +15,7 @@ val join_not_combine : bool setting
 val liberal_datatypes  : bool setting
 val show_ir : bool setting
 val show_ref_counting : bool setting
-val eval : bool setting
+val typecheck_only : bool setting
 
 val set : 'a setting -> 'a -> unit
 val get : 'a setting -> 'a

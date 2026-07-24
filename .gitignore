@@ -1,8 +1,8 @@
 auto/
 _build/
-mbcheck
+pat
 */_build/
-*/mbcheck/_build/
+*/pat/_build/
 *.aux
 *.bbl
 *.blg

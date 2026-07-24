@@ -1,1 +1,1 @@
-(fun (x: Int): Int { x })(5)
+print(intToString((fun (x: Int): Int { x })(5)))

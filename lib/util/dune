@@ -1,3 +1,4 @@
 (library (name util)
  (public_name mbcheck.util)
+ (libraries unix)
 )

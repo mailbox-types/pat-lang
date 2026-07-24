@@ -179,6 +179,90 @@
                 {"name": "Two factor (monolithic)", "filename": "examples/two_factor_two.pat", "exit_code": 0}
             ]
         },
+        { "group": "Interpreter",
+          "tests":
+            [
+                {
+                    "name": "Hello world function",
+                    "filename": "pat-tests/printfun.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout": "hello, world!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Mailbox roundtrip",
+                    "filename": "eval-tests/mailbox_roundtrip.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout": "42\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Spawn handshake",
+                    "filename": "eval-tests/spawn_handshake.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout": "done\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Future (de Liguoro & Padovani)",
+                    "filename": "examples/de_liguoro_padovani/future.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout": "5\n5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Flip",
+                    "filename": "examples/flip.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout_regex": "^(?:heads\\n)*tails\\n$",
+                    "stderr": ""
+                }
+            ]
+        },
+        { "group": "pat-tests under eval",
+          "tests":
+            [
+                { "name": "arith", "filename": "pat-tests/arith.pat", "args": ["--eval"], "exit_code": 0, "stdout": "true\n", "stderr": "" },
+                { "name": "arith1", "filename": "pat-tests/arith1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "true\n", "stderr": "" },
+                { "name": "arith2", "filename": "pat-tests/arith2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "false\n", "stderr": "" },
+                { "name": "atoms", "filename": "pat-tests/atoms.pat", "args": ["--eval"], "exit_code": 0, "stdout": "hello\n", "stderr": "" },
+                { "name": "functions", "filename": "pat-tests/functions.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
+                { "name": "let-annot-1", "filename": "pat-tests/let-annot-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
+                { "name": "let-annot-2", "filename": "pat-tests/let-annot-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
+                { "name": "let-annot-3", "filename": "pat-tests/let-annot-3.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
+                { "name": "linfun-good", "filename": "pat-tests/linfun-good.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Freed!\n", "stderr": "" },
+                { "name": "linlambda", "filename": "pat-tests/linlambda.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Done\n", "stderr": "" },
+                { "name": "list-1", "filename": "pat-tests/list-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
+                { "name": "list-2", "filename": "pat-tests/list-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "3\n", "stderr": "" },
+                { "name": "list-mb", "filename": "pat-tests/list-mb.pat", "args": ["--eval"], "exit_code": 0, "stdout": "done\n", "stderr": "" },
+                { "name": "mb-function-return", "filename": "pat-tests/mb-function-return.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Returning x!\nFreed!\n", "stderr": "" },
+                { "name": "n-tuples", "filename": "pat-tests/n-tuples.pat", "args": ["--eval"], "exit_code": 0, "stdout": "1hello\n", "stderr": "" },
+                { "name": "n-tuples-2", "filename": "pat-tests/n-tuples-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "1hello\n", "stderr": "" },
+                { "name": "printfun", "filename": "pat-tests/printfun.pat", "args": ["--eval"], "exit_code": 0, "stdout": "hello, world!\n", "stderr": "" },
+                { "name": "receivestar", "filename": "pat-tests/receivestar.pat", "args": ["--eval"], "exit_code": 0, "stdout": "done\n", "stderr": "" },
+                { "name": "sleep-test", "filename": "pat-tests/sleep-test.pat", "args": ["--eval"], "exit_code": 0, "stdout_regex": "^(?:(?:1|2|Sleeping)\\n)+$", "stderr": "" },
+                { "name": "sum-1", "filename": "pat-tests/sum-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
+                { "name": "sum-2", "filename": "pat-tests/sum-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
+                { "name": "unr-mb-fun", "filename": "pat-tests/unr-mb-fun.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Ignoring!\nIgnored!\nFreed!\n", "stderr": "" },
+                { "name": "unr-mb-fun-2", "filename": "pat-tests/unr-mb-fun-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Ignoring 1!\nIgnored 1!\nIgnoring 2!\nIgnored 2!\nFreed!\n", "stderr": "" }
+            ]
+        },
+        { "group": "Incorrect pat-tests under eval",
+          "tests":
+            [
+                { "name": "linfun-bad-1", "filename": "pat-tests/linfun-bad-1.pat", "args": ["--eval"], "exit_code": 1 },
+                { "name": "linfun-bad-2", "filename": "pat-tests/linfun-bad-2.pat", "args": ["--eval"], "exit_code": 1 },
+                { "name": "linfun-bad-3", "filename": "pat-tests/linfun-bad-3.pat", "args": ["--eval"], "exit_code": 1 },
+                { "name": "n-tuples-bad-1", "filename": "pat-tests/n-tuples-bad-1.pat", "args": ["--eval"], "exit_code": 1 },
+                { "name": "n-tuples-bad-2", "filename": "pat-tests/n-tuples-bad-2.pat", "args": ["--eval"], "exit_code": 1 },
+                { "name": "tuple-ret-bad", "filename": "pat-tests/tuple-ret-bad.pat", "args": ["--eval"], "exit_code": 1 }
+            ]
+        },
         { "group": "Incorrect examples",
           "tests":
             [

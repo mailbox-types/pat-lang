@@ -1,5 +1,5 @@
 (library
  (name mbcheck)
  (public_name mbcheck)
- (libraries common frontend typecheck util)
+ (libraries common frontend interp typecheck util)
 )

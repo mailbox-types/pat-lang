@@ -2,4 +2,9 @@ def foo(): Atom {
     :hello
 }
 
-foo()
+def main(): Unit {
+    let x = foo() in
+    print("hello")
+}
+
+main()

@@ -1,6 +1,7 @@
 name: Pat main workflow
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main

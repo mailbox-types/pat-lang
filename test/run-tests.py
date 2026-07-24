@@ -5,7 +5,7 @@ import subprocess
 import re
 
 # Assumes the file is run from the tests directory, and that the executable
-# is located at "../mbcheck"
+# is located at "../pat"
 
 def error(msg):
     print(msg, file=sys.stderr)
@@ -13,7 +13,7 @@ def error(msg):
 
 def run_tests(testsuite):
     overall_result = True
-    executable = "../mbcheck"
+    executable = "../pat"
 
     def normalise_output(output):
         return output.replace("\r\n", "\n")

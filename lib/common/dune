@@ -1,5 +1,5 @@
 (library (name common)
- (public_name mbcheck.common)
+ (public_name pat.common)
  (libraries util)
  (preprocess ( staged_pps ppx_import visitors.ppx ppx_deriving.show))
  ; w17: Virtual method unimplemented, incompatible with fold visitor

@@ -1,191 +1,489 @@
-{ "groups":
-    [
-        { "group": "Linear functions",
-          "tests":
-            [
+{
+    "groups": [
+        {
+            "group": "Linear functions",
+            "tests": [
                 {
                     "name": "Linear function (good)",
                     "filename": "pat-tests/linfun-good.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Linear function (bad #1: unused linear variable)",
                     "filename": "pat-tests/linfun-bad-1.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Linear function (bad #2: non-linear function closing over linear variable)",
                     "filename": "pat-tests/linfun-bad-2.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Linear function (bad #3: unused linear function)",
                     "filename": "pat-tests/linfun-bad-3.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Function returning a mailbox type",
                     "filename": "pat-tests/mb-function-return.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 }
             ]
         },
         {
-          "group": "Basic tests",
-          "tests":
-            [
+            "group": "Basic tests",
+            "tests": [
                 {
                     "name": "Arithmetic (1)",
                     "filename": "pat-tests/arith.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Arithmetic (2)",
                     "filename": "pat-tests/arith1.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Arithmetic (3)",
                     "filename": "pat-tests/arith2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Functions",
                     "filename": "pat-tests/functions.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Sums (1)",
                     "filename": "pat-tests/sum-1.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Sums (2)",
                     "filename": "pat-tests/sum-2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Annotated let (1)",
                     "filename": "pat-tests/let-annot-1.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Annotated let (2)",
                     "filename": "pat-tests/let-annot-2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Annotated let (3)",
                     "filename": "pat-tests/let-annot-3.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Atoms",
                     "filename": "pat-tests/atoms.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "n-tuples (1)",
                     "filename": "pat-tests/n-tuples.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "n-tuples (2)",
                     "filename": "pat-tests/n-tuples-2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "n-tuples, bad (1)",
                     "filename": "pat-tests/n-tuples-bad-1.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "n-tuples, bad (2)",
                     "filename": "pat-tests/n-tuples-bad-2.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Lists (1)",
                     "filename": "pat-tests/list-1.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Lists (2)",
                     "filename": "pat-tests/list-2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Lists (with mailboxes)",
                     "filename": "pat-tests/list-mb.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "receive* guard",
                     "filename": "pat-tests/receivestar.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 }
             ]
         },
-        { "group": "Correct examples (de Liguoro & Padovani)",
-          "tests":
-            [
-                {"name": "Account", "filename": "examples/de_liguoro_padovani/account.pat", "exit_code": 0},
-                {"name": "Account with Future", "filename": "examples/de_liguoro_padovani/account_future.pat", "exit_code": 0},
-                {"name": "Future", "filename": "examples/de_liguoro_padovani/future.pat", "exit_code": 0},
-                {"name": "Future with explicit fail guard", "filename": "examples/de_liguoro_padovani/futurefail.pat", "exit_code": 0},
-                {"name": "Future with state passing", "filename": "examples/de_liguoro_padovani/future_state_passing.pat", "exit_code": 0},
-                {"name": "Lock", "filename": "examples/de_liguoro_padovani/lock.pat", "exit_code": 0},
-                {"name": "Master-Worker", "filename": "examples/de_liguoro_padovani/master_worker.pat", "exit_code": 0},
-                {"name": "Session types", "filename": "examples/de_liguoro_padovani/sessions.pat", "exit_code": 0}
+        {
+            "group": "Correct examples (de Liguoro & Padovani)",
+            "tests": [
+                {
+                    "name": "Account",
+                    "filename": "examples/de_liguoro_padovani/account.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Account with Future",
+                    "filename": "examples/de_liguoro_padovani/account_future.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Future",
+                    "filename": "examples/de_liguoro_padovani/future.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Future with explicit fail guard",
+                    "filename": "examples/de_liguoro_padovani/futurefail.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Future with state passing",
+                    "filename": "examples/de_liguoro_padovani/future_state_passing.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Lock",
+                    "filename": "examples/de_liguoro_padovani/lock.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Master-Worker",
+                    "filename": "examples/de_liguoro_padovani/master_worker.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Session types",
+                    "filename": "examples/de_liguoro_padovani/sessions.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
             ]
         },
-        { "group": "Correct examples (Savina)",
-          "tests":
-            [
-                {"name": "Banking", "filename": "examples/savina/banking.pat", "exit_code": 0},
-                {"name": "Big", "filename": "examples/savina/big.pat", "exit_code": 0},
-                {"name": "Cigarette Smoker", "filename": "examples/savina/cig_smok.pat", "exit_code": 0},
-                {"name": "Count", "filename": "examples/savina/count.pat", "exit_code": 0},
-                {"name": "Fibonacci", "filename": "examples/savina/fib.pat", "exit_code": 0},
-                {"name": "Fibonacci with Pairs", "filename": "examples/savina/fib_pairs.pat", "exit_code": 0},
-                {"name": "kfork", "filename": "examples/savina/kfork.pat", "exit_code": 0},
-                {"name": "Log Map", "filename": "examples/savina/log_map.pat", "exit_code": 0},
-                {"name": "Philosopher", "filename": "examples/savina/philosopher.pat", "exit_code": 0},
-                {"name": "Ping Pong", "filename": "examples/savina/ping_pong.pat", "exit_code": 0},
-                {"name": "Ping Pong (Strict)", "filename": "examples/savina/ping_pong_strict.pat", "exit_code": 0},
-                {"name": "Sleeping Barber (Variation 1)", "filename": "examples/savina/barber.pat", "exit_code": 0},
-                {"name": "Sleeping Barber (Variation 2)", "filename": "examples/savina/barber2.pat", "exit_code": 0},
-                {"name": "Sleeping Barber (Variation 3)", "filename": "examples/savina/barber3.pat", "exit_code": 0},
-                {"name": "Thread Ring", "filename": "examples/savina/thread_ring.pat", "exit_code": 0},
-                {"name": "Chameneos", "filename": "examples/savina/chameneos.pat", "exit_code": 0}
+        {
+            "group": "Correct examples (Savina)",
+            "tests": [
+                {
+                    "name": "Banking",
+                    "filename": "examples/savina/banking.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Big",
+                    "filename": "examples/savina/big.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Cigarette Smoker",
+                    "filename": "examples/savina/cig_smok.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Count",
+                    "filename": "examples/savina/count.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fibonacci",
+                    "filename": "examples/savina/fib.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fibonacci with Pairs",
+                    "filename": "examples/savina/fib_pairs.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "kfork",
+                    "filename": "examples/savina/kfork.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Log Map",
+                    "filename": "examples/savina/log_map.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Philosopher",
+                    "filename": "examples/savina/philosopher.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Ping Pong",
+                    "filename": "examples/savina/ping_pong.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Ping Pong (Strict)",
+                    "filename": "examples/savina/ping_pong_strict.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Sleeping Barber (Variation 1)",
+                    "filename": "examples/savina/barber.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Sleeping Barber (Variation 2)",
+                    "filename": "examples/savina/barber2.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Sleeping Barber (Variation 3)",
+                    "filename": "examples/savina/barber3.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Thread Ring",
+                    "filename": "examples/savina/thread_ring.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Chameneos",
+                    "filename": "examples/savina/chameneos.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
             ]
         },
-        { "group": "Correct examples (Savina with lists)",
-          "tests":
-            [
-                {"name": "Banking (lists)", "filename": "examples/savina/lists/banking.pat", "exit_code": 0},
-                {"name": "Big (lists)", "filename": "examples/savina/lists/big.pat", "exit_code": 0},
-                {"name": "Cigarette Smoker (lists)", "filename": "examples/savina/lists/cig_smok.pat", "exit_code": 0},
-                {"name": "kfork (lists)", "filename": "examples/savina/lists/kfork.pat", "exit_code": 0}
+        {
+            "group": "Correct examples (Savina with lists)",
+            "tests": [
+                {
+                    "name": "Banking (lists)",
+                    "filename": "examples/savina/lists/banking.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Big (lists)",
+                    "filename": "examples/savina/lists/big.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Cigarette Smoker (lists)",
+                    "filename": "examples/savina/lists/cig_smok.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "kfork (lists)",
+                    "filename": "examples/savina/lists/kfork.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
             ]
         },
-        { "group": "Correct examples (Others)",
-          "tests":
-            [
-                {"name": "n-Robots", "filename": "examples/robotsn.pat", "exit_code": 0},
-                {"name": "n-Robots (lists)", "filename": "examples/robotsn-lists.pat", "exit_code": 0},
-                {"name": "Guard annotation is a subpattern", "filename": "examples/pat_constr.pat", "exit_code": 0},
-                {"name": "Two factor (subprocess)", "filename": "examples/two_factor.pat", "exit_code": 0},
-                {"name": "Two factor (monolithic)", "filename": "examples/two_factor_two.pat", "exit_code": 0}
+        {
+            "group": "Correct examples (Others)",
+            "tests": [
+                {
+                    "name": "n-Robots",
+                    "filename": "examples/robotsn.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "n-Robots (lists)",
+                    "filename": "examples/robotsn-lists.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Guard annotation is a subpattern",
+                    "filename": "examples/pat_constr.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Two factor (subprocess)",
+                    "filename": "examples/two_factor.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Two factor (monolithic)",
+                    "filename": "examples/two_factor_two.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
             ]
         },
-        { "group": "Interpreter",
-          "tests":
-            [
+        {
+            "group": "Interpreter",
+            "tests": [
                 {
                     "name": "Hello world function",
                     "filename": "pat-tests/printfun.pat",
-                    "args": ["--eval"],
                     "exit_code": 0,
                     "stdout": "hello, world!\n",
                     "stderr": ""
@@ -193,7 +491,6 @@
                 {
                     "name": "Mailbox roundtrip",
                     "filename": "eval-tests/mailbox_roundtrip.pat",
-                    "args": ["--eval"],
                     "exit_code": 0,
                     "stdout": "42\n",
                     "stderr": ""
@@ -201,7 +498,6 @@
                 {
                     "name": "Spawn handshake",
                     "filename": "eval-tests/spawn_handshake.pat",
-                    "args": ["--eval"],
                     "exit_code": 0,
                     "stdout": "done\n",
                     "stderr": ""
@@ -209,7 +505,6 @@
                 {
                     "name": "Future (de Liguoro & Padovani)",
                     "filename": "examples/de_liguoro_padovani/future.pat",
-                    "args": ["--eval"],
                     "exit_code": 0,
                     "stdout": "5\n5\n",
                     "stderr": ""
@@ -217,102 +512,336 @@
                 {
                     "name": "Flip",
                     "filename": "examples/flip.pat",
-                    "args": ["--eval"],
                     "exit_code": 0,
                     "stdout_regex": "^(?:heads\\n)*tails\\n$",
                     "stderr": ""
                 }
             ]
         },
-        { "group": "pat-tests under eval",
-          "tests":
-            [
-                { "name": "arith", "filename": "pat-tests/arith.pat", "args": ["--eval"], "exit_code": 0, "stdout": "true\n", "stderr": "" },
-                { "name": "arith1", "filename": "pat-tests/arith1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "true\n", "stderr": "" },
-                { "name": "arith2", "filename": "pat-tests/arith2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "false\n", "stderr": "" },
-                { "name": "atoms", "filename": "pat-tests/atoms.pat", "args": ["--eval"], "exit_code": 0, "stdout": "hello\n", "stderr": "" },
-                { "name": "functions", "filename": "pat-tests/functions.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
-                { "name": "let-annot-1", "filename": "pat-tests/let-annot-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
-                { "name": "let-annot-2", "filename": "pat-tests/let-annot-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
-                { "name": "let-annot-3", "filename": "pat-tests/let-annot-3.pat", "args": ["--eval"], "exit_code": 0, "stdout": "10\n", "stderr": "" },
-                { "name": "linfun-good", "filename": "pat-tests/linfun-good.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Freed!\n", "stderr": "" },
-                { "name": "linlambda", "filename": "pat-tests/linlambda.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Done\n", "stderr": "" },
-                { "name": "list-1", "filename": "pat-tests/list-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
-                { "name": "list-2", "filename": "pat-tests/list-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "3\n", "stderr": "" },
-                { "name": "list-mb", "filename": "pat-tests/list-mb.pat", "args": ["--eval"], "exit_code": 0, "stdout": "done\n", "stderr": "" },
-                { "name": "mb-function-return", "filename": "pat-tests/mb-function-return.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Returning x!\nFreed!\n", "stderr": "" },
-                { "name": "n-tuples", "filename": "pat-tests/n-tuples.pat", "args": ["--eval"], "exit_code": 0, "stdout": "1hello\n", "stderr": "" },
-                { "name": "n-tuples-2", "filename": "pat-tests/n-tuples-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "1hello\n", "stderr": "" },
-                { "name": "printfun", "filename": "pat-tests/printfun.pat", "args": ["--eval"], "exit_code": 0, "stdout": "hello, world!\n", "stderr": "" },
-                { "name": "receivestar", "filename": "pat-tests/receivestar.pat", "args": ["--eval"], "exit_code": 0, "stdout": "done\n", "stderr": "" },
-                { "name": "sleep-test", "filename": "pat-tests/sleep-test.pat", "args": ["--eval"], "exit_code": 0, "stdout_regex": "^(?:(?:1|2|Sleeping)\\n)+$", "stderr": "" },
-                { "name": "sum-1", "filename": "pat-tests/sum-1.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
-                { "name": "sum-2", "filename": "pat-tests/sum-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "5\n", "stderr": "" },
-                { "name": "unr-mb-fun", "filename": "pat-tests/unr-mb-fun.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Ignoring!\nIgnored!\nFreed!\n", "stderr": "" },
-                { "name": "unr-mb-fun-2", "filename": "pat-tests/unr-mb-fun-2.pat", "args": ["--eval"], "exit_code": 0, "stdout": "Ignoring 1!\nIgnored 1!\nIgnoring 2!\nIgnored 2!\nFreed!\n", "stderr": "" }
+        {
+            "group": "pat-tests under interpreter",
+            "tests": [
+                {
+                    "name": "arith",
+                    "filename": "pat-tests/arith.pat",
+                    "exit_code": 0,
+                    "stdout": "true\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "arith1",
+                    "filename": "pat-tests/arith1.pat",
+                    "exit_code": 0,
+                    "stdout": "true\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "arith2",
+                    "filename": "pat-tests/arith2.pat",
+                    "exit_code": 0,
+                    "stdout": "false\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "atoms",
+                    "filename": "pat-tests/atoms.pat",
+                    "exit_code": 0,
+                    "stdout": "hello\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "functions",
+                    "filename": "pat-tests/functions.pat",
+                    "exit_code": 0,
+                    "stdout": "5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "let-annot-1",
+                    "filename": "pat-tests/let-annot-1.pat",
+                    "exit_code": 0,
+                    "stdout": "10\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "let-annot-2",
+                    "filename": "pat-tests/let-annot-2.pat",
+                    "exit_code": 0,
+                    "stdout": "10\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "let-annot-3",
+                    "filename": "pat-tests/let-annot-3.pat",
+                    "exit_code": 0,
+                    "stdout": "10\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "linfun-good",
+                    "filename": "pat-tests/linfun-good.pat",
+                    "exit_code": 0,
+                    "stdout": "Freed!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "linlambda",
+                    "filename": "pat-tests/linlambda.pat",
+                    "exit_code": 0,
+                    "stdout": "Done\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "list-1",
+                    "filename": "pat-tests/list-1.pat",
+                    "exit_code": 0,
+                    "stdout": "5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "list-2",
+                    "filename": "pat-tests/list-2.pat",
+                    "exit_code": 0,
+                    "stdout": "3\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "list-mb",
+                    "filename": "pat-tests/list-mb.pat",
+                    "exit_code": 0,
+                    "stdout": "done\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "mb-function-return",
+                    "filename": "pat-tests/mb-function-return.pat",
+                    "exit_code": 0,
+                    "stdout": "Returning x!\nFreed!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "n-tuples",
+                    "filename": "pat-tests/n-tuples.pat",
+                    "exit_code": 0,
+                    "stdout": "1hello\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "n-tuples-2",
+                    "filename": "pat-tests/n-tuples-2.pat",
+                    "exit_code": 0,
+                    "stdout": "1hello\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "printfun",
+                    "filename": "pat-tests/printfun.pat",
+                    "exit_code": 0,
+                    "stdout": "hello, world!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "receivestar",
+                    "filename": "pat-tests/receivestar.pat",
+                    "exit_code": 0,
+                    "stdout": "done\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "sleep-test",
+                    "filename": "pat-tests/sleep-test.pat",
+                    "exit_code": 0,
+                    "stdout_regex": "^(?:(?:1|2|Sleeping)\\n)+$",
+                    "stderr": ""
+                },
+                {
+                    "name": "sum-1",
+                    "filename": "pat-tests/sum-1.pat",
+                    "exit_code": 0,
+                    "stdout": "5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "sum-2",
+                    "filename": "pat-tests/sum-2.pat",
+                    "exit_code": 0,
+                    "stdout": "5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "unr-mb-fun",
+                    "filename": "pat-tests/unr-mb-fun.pat",
+                    "exit_code": 0,
+                    "stdout": "Ignoring!\nIgnored!\nFreed!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "unr-mb-fun-2",
+                    "filename": "pat-tests/unr-mb-fun-2.pat",
+                    "exit_code": 0,
+                    "stdout": "Ignoring 1!\nIgnored 1!\nIgnoring 2!\nIgnored 2!\nFreed!\n",
+                    "stderr": ""
+                }
             ]
         },
-        { "group": "Incorrect pat-tests under eval",
-          "tests":
-            [
-                { "name": "linfun-bad-1", "filename": "pat-tests/linfun-bad-1.pat", "args": ["--eval"], "exit_code": 1 },
-                { "name": "linfun-bad-2", "filename": "pat-tests/linfun-bad-2.pat", "args": ["--eval"], "exit_code": 1 },
-                { "name": "linfun-bad-3", "filename": "pat-tests/linfun-bad-3.pat", "args": ["--eval"], "exit_code": 1 },
-                { "name": "n-tuples-bad-1", "filename": "pat-tests/n-tuples-bad-1.pat", "args": ["--eval"], "exit_code": 1 },
-                { "name": "n-tuples-bad-2", "filename": "pat-tests/n-tuples-bad-2.pat", "args": ["--eval"], "exit_code": 1 },
-                { "name": "tuple-ret-bad", "filename": "pat-tests/tuple-ret-bad.pat", "args": ["--eval"], "exit_code": 1 }
+        {
+            "group": "Incorrect pat-tests under interpreter",
+            "tests": [
+                {
+                    "name": "linfun-bad-1",
+                    "filename": "pat-tests/linfun-bad-1.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "linfun-bad-2",
+                    "filename": "pat-tests/linfun-bad-2.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "linfun-bad-3",
+                    "filename": "pat-tests/linfun-bad-3.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "n-tuples-bad-1",
+                    "filename": "pat-tests/n-tuples-bad-1.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "n-tuples-bad-2",
+                    "filename": "pat-tests/n-tuples-bad-2.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "tuple-ret-bad",
+                    "filename": "pat-tests/tuple-ret-bad.pat",
+                    "exit_code": 1
+                }
             ]
         },
-        { "group": "Incorrect examples",
-          "tests":
-            [
-                {"name": "Aliasing through communication (1)", "filename": "errors/alias_comm1.pat", "exit_code": 1},
-                {"name": "Aliasing through communication (2)", "filename": "errors/alias_comm2.pat", "exit_code": 1},
-                {"name": "Aliasing through communication (3)", "filename": "errors/simple_alias_comm.pat", "exit_code": 1},
+        {
+            "group": "Incorrect examples",
+            "tests": [
+                {
+                    "name": "Aliasing through communication (1)",
+                    "filename": "errors/alias_comm1.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Aliasing through communication (2)",
+                    "filename": "errors/alias_comm2.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Aliasing through communication (3)",
+                    "filename": "errors/simple_alias_comm.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
                 {
                     "name": "Lock",
                     "filename": "errors/lock.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Future",
                     "filename": "errors/future.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Use after free",
                     "filename": "errors/useafterfree.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Use after free (2)",
                     "filename": "errors/uaf1.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Use after free (3)",
                     "filename": "errors/uaf2.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Use after free (4)",
                     "filename": "errors/uaf3.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Use after free (lists)",
                     "filename": "errors/uaf_lists.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Aliasing through communication (lists)",
                     "filename": "errors/list-alias-test.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
-                {"name": "Insufficient type information", "filename": "errors/pat_constr.pat", "exit_code": 1},
-                {"name": "Non-exhaustive guards", "filename": "errors/pat_constr2.pat", "exit_code": 1},
-                {"name": "Additional non-supported non-fail guard with nontrivial continuation", "filename": "errors/pat_constr3.pat", "exit_code": 1},
-                {"name": "Additional non-supported free guard", "filename": "errors/pat_constr4.pat", "exit_code": 1}
+                {
+                    "name": "Insufficient type information",
+                    "filename": "errors/pat_constr.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Non-exhaustive guards",
+                    "filename": "errors/pat_constr2.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Additional non-supported non-fail guard with nontrivial continuation",
+                    "filename": "errors/pat_constr3.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Additional non-supported free guard",
+                    "filename": "errors/pat_constr4.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
             ]
         }
     ]

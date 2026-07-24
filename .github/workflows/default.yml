@@ -1,4 +1,4 @@
-name: MBCheck main workflow
+name: Pat main workflow
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ jobs:
         os:
           - ubuntu-20.04
         ocaml-compiler:
-          - 5.0.0
+          - 5.2.0
 
     runs-on: ${{ matrix.os }}
 
@@ -33,13 +33,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt install z3
 
-      - name: Install mbcheck dependencies
+      - name: Install pat dependencies
         run: >-
           opam install
-          ./mbcheck.opam
+          ./pat.opam
           --deps-only
 
-      - name: Build mbcheck from source
+      - name: Build pat from source
         run: |
           eval $(opam env)
           make

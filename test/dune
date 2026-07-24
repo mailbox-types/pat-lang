@@ -1,2 +1,2 @@
 (test
- (name mbcheck))
+ (name pat))

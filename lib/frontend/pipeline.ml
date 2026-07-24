@@ -29,7 +29,7 @@ let typecheck p ir =
     let p = Sugar_ast.substitute_solution solution p in
     let ir = Ir.substitute_solution solution ir in
     let () =
-        if Settings.(get eval) then
+        if not Settings.(get typecheck_only) then
             let rc_ir = with_reference_counting ir in
             Interp.Eval.run_program rc_ir
     in

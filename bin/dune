@@ -1,5 +1,5 @@
 (executable
- (public_name mbcheck)
+ (public_name pat)
  (name main)
  (modes byte exe)
  (libraries common frontend cmdliner))

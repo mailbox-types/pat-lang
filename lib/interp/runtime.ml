@@ -3,24 +3,32 @@ open Runtime_common
 open Eio
 open Ir
 
-type runtime_message = (message_tag * RuntimeValue.t list)
+(* A mailbox is represented internally as a pair of a reference count, and a
+list of runtime messages. *)
 type mailbox = int * runtime_message list
 
-(* Pairs a runtime name with a promise resolver to trigger a recheck of the mailbox. 
-An optimisation may be to only wake up when we know a given message will make the mailbox,
-but that comes later.
-*)
+(* The result of guarding on a mailbox. *)
+type await_result =
+   | Received of Runtime_common.runtime_message
+   | Freed
+
+(* Pairs a runtime name with a promise resolver to trigger a recheck of the mailbox. *)
 type blocked_state = (RuntimeName.t, unit Promise.u) Hashtbl.t
 type mailbox_state = (RuntimeName.t, mailbox) Hashtbl.t
 type reference_counting_state = (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t
 
+(* The overall runtime state, recording required EIO metadata; all blocked threads; mailboxes;
+   reference counting state; and the thread and step counts. 
+   Convenient to make this mutable such that it is accessible across threads; this is safe
+   due to co-operative concurrency. Accesses will need synchronisation if we decide to move
+   to parallel execution. *)
 type t = {
   program: program;
   switch: Eio.Switch.t;
   env: Eio_unix.Stdenv.base;
   blocked: blocked_state;
   mailboxes: mailbox_state;
-  reference_counted_values: (RuntimeName.t, (int * RuntimeValue.t)) Hashtbl.t;
+  reference_counted_values: reference_counting_state;
   thread_count: int ref;
   step_count: int ref
 }
@@ -159,14 +167,14 @@ let rec free_mailbox (runtime : t) (mailbox : RuntimeName.t) : unit =
       (Format.asprintf "Free requires mailbox %a to have state (1, empty), got %a"
         RuntimeName.pp mailbox pp_mailbox_entry entry)
 
-let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag list) : runtime_message option =
+let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag list) : await_result =
   match Hashtbl.find_opt runtime.mailboxes name with
   | None ->
     runtime_error
       (Format.asprintf "Guard target mailbox %a does not exist" RuntimeName.pp name)
   (* If the mailbox is empty and has refcount 1, then we can trigger an empty guard. *)
   | Some (refcount, messages) when refcount = 1 && List.is_empty messages ->
-    None
+    Freed
   | Some (refcount, messages) ->
     (* Otherwise we need to check whether any messages in the mailbox are contained in the tag list *)
     begin
@@ -174,7 +182,7 @@ let rec await_message (runtime : t) (name: RuntimeName.t) (tags : message_tag li
         (* If so, update mailbox and return *)
         | Some (msg, updated_mb) ->
           let () = Hashtbl.replace runtime.mailboxes name (refcount, updated_mb) in
-          Some msg
+          Received msg
         (* If not, we need to block and re-check *)
         | None ->
           block_thread runtime name;

@@ -19,11 +19,11 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
     in
     let ircg borrowed guards_owned g = insert_reference_counting_guard decls borrowed guards_owned g in
     match WithIrMetadata.node comp with
-        | Annotate (c, ty) -> (* OK *)
+        | Annotate (c, ty) ->
             let c' = irc borrowed owned c in
             let fvs = get_fvs c' in
             WithIrMetadata.make ~fvs (Annotate (c', ty))
-        | Let { binder; term; cont } -> (* LOL! Thought I'd finished this! *)
+        | Let { binder; term; cont } ->
             let binder_var = Var.of_binder binder in
             let cont_fvs = get_fvs cont in
             let e2_owned = VarSet.(inter owned (diff cont_fvs (singleton binder_var))) in
@@ -262,8 +262,11 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
         | New interface ->
             WithIrMetadata.make ~fvs:VarSet.empty (New interface)
         | Spawn e ->
-            (* This is an interesting one. We need any reference counting that's done inside the expression
-               to happen in the parent thread, **not** the spawned thread. *)
+            (* We need any reference counting that's done inside the expression
+               to happen in the parent thread, **not** the spawned thread. Otherwise we end up
+               with a concurrency bug: required duplications will be deferred until the 
+               spawned thread is scheduled. By hoisting any duplications to the parent thread we
+               ensure the continuation is evaluated in a consistent state regardless of scheduling. *)
             let counted_body = irc borrowed owned e in
             let unchanged = WithIrMetadata.make ~fvs:(get_fvs counted_body) (Spawn counted_body) in
             begin
@@ -350,7 +353,7 @@ According to the original Perceus algorithm the generated code would be:
 However this doesn't work because we can only send syntactic values. Instead we'd generate:
   dup y;
   x ! M(y); guard y { ... }
-It's not as exactly local as Perceus but it's (hopefully!) safe.
+It's not as exactly local as Perceus but it's safe.
 *)
 and insert_reference_counting_val decls borrowed owned value =
     let decl_vars =

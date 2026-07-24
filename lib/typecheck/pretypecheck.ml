@@ -288,7 +288,7 @@ and synthesise_comp ienv env comp =
             let b2_env = PretypeEnv.bind (Var.of_binder bnd2) prety1 b1_env in
             let e2, b2_ty = synthesise_comp ienv b2_env e2 in
             let e1 = check_comp ienv b2_env e1 b2_ty in
-                        wrap
+            wrap
               (CaseL { term = scrutinee;
                        ty = ty1;
                        nil = e1;
@@ -296,7 +296,7 @@ and synthesise_comp ienv env comp =
         | Seq (e1, e2) ->
             let e1 = check_comp ienv env e1 (Pretype.unit) in
             let e2, e2_ty = synth e2 in
-                        wrap (Seq (e1, e2)), e2_ty
+            wrap (Seq (e1, e2)), e2_ty
         | App { func; args } ->
             let open Pretype in
             (* Synthesise type for function; ensure it is a function type *)

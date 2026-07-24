@@ -205,6 +205,22 @@
                     "exit_code": 0,
                     "stdout": "done\n",
                     "stderr": ""
+                },
+                {
+                    "name": "Future (de Liguoro & Padovani)",
+                    "filename": "examples/de_liguoro_padovani/future.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout": "5\n5\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Flip",
+                    "filename": "examples/flip.pat",
+                    "args": ["--eval"],
+                    "exit_code": 0,
+                    "stdout_regex": "^(?:heads\\n)*tails\\n$",
+                    "stderr": ""
                 }
             ]
         },

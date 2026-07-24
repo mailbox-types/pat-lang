@@ -785,7 +785,7 @@ and check_guards :
           (* Do a duplication check on guards *)
           let _ =
             List.fold_left (fun (empty, fail, tags) x ->
-                            let pos = WithIrMetadata.pos x in
+              let pos = WithIrMetadata.pos x in
               match WithIrMetadata.node x with
                 | Empty _ ->
                     if empty then
@@ -813,7 +813,7 @@ and check_guards :
               check_guard ienv decl_env iname guard_pat g ty
             in
             (* Calculate environment intersection *)
-                        let (env, env_constrs) = Nullable_env.intersect g_env env (WithIrMetadata.pos g) in
+            let (env, env_constrs) = Nullable_env.intersect g_env env (WithIrMetadata.pos g) in
             let constrs =
               Constraint_set.union_many
                 [g_constrs; env_constrs; acc_constrs] in
@@ -828,13 +828,13 @@ and check_guard :
         fun ienv decl_env iname pat g ty ->
           let open Ir in
           let open Type in
-                    let pos = WithIrMetadata.pos g in
+          let pos = WithIrMetadata.pos g in
           match (WithIrMetadata.node g) with
             | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
                 let (env, cont_constrs) = check_comp ienv decl_env cont ty in
                 let payload_iface_tys =
-                        let interface_withPos = IEnv.lookup iname ienv [pos] in
-                                                Interface.lookup ~pos_list:[(WithPos.pos interface_withPos); pos] tag (WithPos.node interface_withPos)
+                    let interface_withPos = IEnv.lookup iname ienv [pos] in
+                    Interface.lookup ~pos_list:[(WithPos.pos interface_withPos); pos] tag (WithPos.node interface_withPos)
                 in
                 (* Check that the received values have types consistent with the
                    interface annotations. *)

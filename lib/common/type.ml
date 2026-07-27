@@ -244,7 +244,7 @@ module Pattern = struct
         | Concat (p1, p2) ->
             fprintf ppf "(%a . %a)" pp p1 pp p2
         | Many p ->
-            fprintf ppf "*(%a)" pp p
+            fprintf ppf "(%a)*" pp p
 
     let show = Format.asprintf "%a" pp
 end

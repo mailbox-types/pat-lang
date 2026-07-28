@@ -1,31 +1,28 @@
-interface Lock { Acquire(User!), Release(Unit) }
-interface User { Reply(Lock!) }
+interface Lock { Acquire(User!), Release() }
+interface User { Acquired(Lock!) }
 
 def freeLock(self: Lock?): Unit {
-    guard (self) : Acquire*  {
+    guard self : Acquire*  {
         free -> ()
         receive Acquire(owner) from self ->
-            busyLock(self, owner)
-        receive Release(x) from self ->
-            fail(self)[Unit]
+            owner ! Acquired(self);
+            busyLock(self)
     }
 }
 
-def busyLock(self: Lock?, owner: User!): Unit {
-    owner ! Reply(self);
-    guard (self) : Acquire*.Release {
-        receive Release(x) from self ->
+def busyLock(self: Lock?): Unit {
+    guard self : Acquire* . Release {
+        receive Release() from self ->
             freeLock(self)
     }
 }
 
-def user(num: Int, lock: Lock!): Unit {
+def user(num: Int, lock: Lock!Acquire): Unit {
     let self = new[User] in
     lock ! Acquire(self);
-    guard(self) : Reply {
-        receive Reply(lock) from self ->
-            print(intToString(num));
-            lock ! Release(());
+    guard self : Acquired {
+        receive Acquired(lock) from self ->
+            lock ! Release();
             free(self)
     }
 }

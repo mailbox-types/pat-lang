@@ -17,11 +17,12 @@ def busyLock(self: Lock?): Unit {
     }
 }
 
-def user(num: Int, lock: Lock!Acquire): Unit {
+def user(num: Int, lock: Lock!): Unit {
     let self = new[User] in
     lock ! Acquire(self);
     guard self : Acquired {
         receive Acquired(lock) from self ->
+            print(intToString(num));
             lock ! Release();
             free(self)
     }

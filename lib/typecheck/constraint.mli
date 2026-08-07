@@ -2,8 +2,6 @@ open Common
 
 type t
 
-exception Trap of string
-
 (** Constructs a constraint from two patterns *)
 val make : Type.Pattern.t -> Type.Pattern.t -> t
 

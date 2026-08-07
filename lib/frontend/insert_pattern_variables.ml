@@ -83,7 +83,7 @@ let annotate_interface_type pos ty =
     let open Type in
     match ty with
         (* Outermost MB types (i.e., payloads) are treated as usable. *)
-        | UserMailbox { umb_quasilinearity = Some _ ; _ } ->
+        | UserMailbox { umb_quasilinearity = Some Returnable ; _ } ->
             raise (Errors.desugar_error
                 "Mailbox message payloads cannot be returnable."
                 [pos]

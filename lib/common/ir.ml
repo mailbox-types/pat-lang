@@ -2,7 +2,6 @@
 open Common_types
 open Format
 open Util.Utility
-open Source_code
 
 module Binder = struct
     type t = { id: int; name: string }
@@ -28,6 +27,45 @@ module Binder = struct
         let prefix =
             if x.name = "" then "_" else x.name in
         Format.pp_print_string ppf (prefix ^ (string_of_int x.id))
+end
+
+module RuntimeName = struct
+    type t =
+        | MailboxName of int
+        | ValueName of int
+    [@@name "runtime_name"]
+    [@@deriving visitors { variety = "map"; data = false }]
+
+    (* Accessors *)
+    let id = function
+        | MailboxName i
+        | ValueName i -> i
+
+    let compare x1 x2 =
+        match (x1, x2) with
+        | (MailboxName i1, MailboxName i2)
+        | (ValueName i1, ValueName i2) -> Int.compare i1 i2
+        | (MailboxName _, ValueName _) -> -1
+        | (ValueName _, MailboxName _) -> 1
+
+    let source = ref 0
+
+    let gen () =
+        let res = !source in
+        incr source;
+        res
+
+    let make_mailbox () =
+        MailboxName (gen ())
+
+    let make_value () =
+        ValueName (gen ())
+
+    (* Display *)
+    let pp ppf x =
+        match x with
+        | MailboxName i -> Format.pp_print_string ppf ("m_" ^ string_of_int i)
+        | ValueName i -> Format.pp_print_string ppf ("v_" ^ string_of_int i)
 end
 
 module Var = struct
@@ -58,10 +96,43 @@ module Var = struct
         compare (unique_name x1) (unique_name x2)
 end
 
+(*
+module type VarSet = (Set.S with type elt = Var.t)
+*)
+module VarSet = struct
+    include Set.Make(Var) 
+    let union_many vs = List.fold_left (union) empty vs
+    let remove_many set vs = diff set (of_list vs)
+    let pp ppf varset =
+        Format.fprintf ppf "{%a}" (pp_print_comma_list Var.pp) (elements varset)
+end 
+type varset = VarSet.t
+
+(* It is useful to keep track of metadata associated with each IR node.
+This includes both source positions (for diagnostics) and free variables
+(for reference counting and eventually cancellation). *)
+module WithIrMetadata = struct
+  type 'a t = { node : 'a
+              ; pos  : (Source_code.Position.t[@opaque])
+              ; fvs  : (varset[@opaque])
+              } 
+            [@@name "withIR"]
+            [@@deriving visitors { variety = "map"; polymorphic = true}]
+            
+    let make ?(pos = Source_code.Position.dummy) ?(fvs = VarSet.empty) node = { node; pos; fvs }
+  let node t = t.node
+  let pos t = t.pos
+  let fvs t = t.fvs
+
+    let pp pp_node ppf { node; pos; fvs } =
+        Format.fprintf ppf "%a @ %a with FVs ({%a})" pp_node node Source_code.Position.pp pos VarSet.pp fvs
+
+end
+
 
 type program = {
-    prog_interfaces: ((Interface.t[@name "interface"]) WithPos.t [@name "withP"]) list;
-    prog_decls: (decl WithPos.t [@name "withP"]) list;
+    prog_interfaces: (Interface.t[@name "interface"]) list;
+    prog_decls: decl list;
     prog_body: comp option
 }
 and decl = {
@@ -70,7 +141,7 @@ and decl = {
     decl_return_type: (Type.t[@name "ty"]);
     decl_body: comp
 }
-and comp = (comp_node WithPos.t [@name "withP"])
+and comp = (comp_node WithIrMetadata.t [@name "withIR"])
 and comp_node =
     | Annotate of comp * (Type.t[@name "ty"])
     | Let of {
@@ -117,47 +188,99 @@ and comp_node =
         guards: guard list;
         iname: string option
       }
-and value = (value_node WithPos.t [@name "withP"])
+        (* Reference counting instructions inserted after typechecking *)
+        | Drop of {
+                vars: ((Var.t[@name "var"]) * int) list;
+                names: ((RuntimeName.t[@name "runtime_name"]) * int) list
+            }
+    | Dup of ((Var.t[@name "var"]) * int) list
+and value = (value_node WithIrMetadata.t [@name "withIR"])
+and lambda = {
+    linear: bool;
+    parameters: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) list;
+    result_type: (Type.t[@name "ty"]);
+    body: comp
+}
 and value_node =
     | VAnnotate of value * (Type.t[@name "ty"])
     | Atom of atom_name
     | Constant of constant
     | Primitive of primitive_name
     | Variable of (Var.t[@name "var"]) * (Pretype.t[@name "pretype"]) option
+    | Name of (RuntimeName.t[@name "runtime_name"])
     | Tuple of value list
     | Nil
     | Cons of value * value
     | Inl of value
     | Inr of value
-    | Lam of {
-        linear: bool;
-        parameters: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) list;
-        result_type: (Type.t[@name "ty"]);
-        body: comp
-    }
-and message = (string * value list)
+    | Lam of lambda
+and message_tag = string
+and message = (message_tag * value list)
     [@@name "msg"]
 and primitive_name = string
 and atom_name = string
 and constant =
     [%import: Common_types.Constant.t]
-and guard = (guard_node WithPos.t [@name "withP"])
-and guard_node =
-    | Receive of {
+and guard = (guard_node WithIrMetadata.t [@name "withIR"])
+and receive_guard = {
         tag: string;
         payload_binders: (Binder.t[@name "binder"]) list;
         mailbox_binder: (Binder.t[@name "binder"]);
         strategy: Settings.ReceiveTypingStrategy.t option;
         cont: comp
     }
+and guard_node =
+    | Receive of receive_guard
     | Empty of ((Binder.t[@name "binder"]) * comp)
     | Fail
     [@@deriving visitors {
         variety = "map";
         ancestors = [
             "Type.map"; "Pretype.map"; "Binder.map";
-            "Interface.map"; "Var.map"; "WithPos.map"];
+            "RuntimeName.map"; "Interface.map"; "Var.map"; "WithIrMetadata.map"];
         data = false }]
+
+let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
+    if List.is_empty dups then
+        comp
+    else
+        let fvs = WithIrMetadata.fvs comp in
+        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Dup dups), comp))
+
+let insert_drop ?(names = []) (drops : (Var.t * int) list) (comp : comp) : comp =
+    if List.is_empty drops && List.is_empty names then
+        comp
+    else
+        let fvs = WithIrMetadata.fvs comp in
+        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop { vars = drops; names }), comp))
+
+
+let normalise_seq comp =
+    let right_nest_seq c =
+        let rec mk_right_nested left right =
+            match WithIrMetadata.node left with
+            | Seq (a, b) ->
+                let right' = WithIrMetadata.make ~fvs:(WithIrMetadata.fvs right) (Seq (b, right)) in
+                mk_right_nested a right'
+            | _ ->
+                WithIrMetadata.make ~fvs:(WithIrMetadata.fvs c) (Seq (left, right))
+        in
+        match WithIrMetadata.node c with
+        | Seq (c1, c2) -> mk_right_nested c1 c2
+        | _ -> c
+    in
+    let visitor =
+        object
+            inherit [_] map as super
+
+            method! visit_comp env c =
+                let c' = super#visit_comp env c in
+                right_nest_seq c'
+
+            method visit_t _env x = x
+        end
+    in
+    visitor#visit_comp () comp
 
 (* Pretty-printing of the AST *)
 (* Programs *)
@@ -172,13 +295,12 @@ and pp_interface ppf iface =
         fprintf ppf "%s(%a)" tag
         (pp_print_comma_list Type.pp) tys
     in
-    let xs = Interface.bindings (WithPos.node iface) in
+    let xs = Interface.bindings iface in
     fprintf ppf "interface %s { %a }"
-        (Interface.name (WithPos.node iface))
+        (Interface.name iface)
         (pp_print_comma_list pp_msg_ty) xs
 (* Declarations *)
-and pp_decl ppf decl_with_pos =
-    let { WithPos.node = { decl_name; decl_parameters; decl_return_type; decl_body }; _ } = decl_with_pos in
+and pp_decl ppf { decl_name; decl_parameters; decl_return_type; decl_body } =
     fprintf ppf "def %a(%a): %a {@,@[<v 2>  %a@]@,}"
         Binder.pp decl_name
         (pp_print_comma_list pp_param) decl_parameters
@@ -209,7 +331,7 @@ and pp_cons name ppf ((bnd1, bnd2), c) =
         pp_comp c
 (* Expressions *)
 and pp_comp ppf comp_with_pos =
-    let comp_node = WithPos.node comp_with_pos in
+    let comp_node = WithIrMetadata.node comp_with_pos in
     match comp_node with
     | Annotate (c, ty) ->
         fprintf ppf "(%a : %a)" pp_comp c Type.pp ty
@@ -238,7 +360,7 @@ and pp_comp ppf comp_with_pos =
         (* Special-case the common case of sending to a variable.
            Bracket the rest for readability. *)
         begin
-            match WithPos.node target with
+            match WithIrMetadata.node target with
                 | Variable _ ->
                     fprintf ppf "%a ! %a"
                         pp_value target
@@ -273,8 +395,29 @@ and pp_comp ppf comp_with_pos =
             pp_value target
             Type.Pattern.pp pattern
             (pp_print_newline_list pp_guard) guards
+    | Drop { vars; names } ->
+        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
+        let pp_name ppf (name, count) = fprintf ppf "\"%a\":%d" RuntimeName.pp name count in
+        begin
+            match (vars, names) with
+            | (_, []) ->
+                fprintf ppf "drop (%a)"
+                    (pp_print_comma_list pp_var) vars
+            | ([], _) ->
+                fprintf ppf "drop_names (%a)"
+                    (pp_print_comma_list pp_name) names
+            | _ ->
+                fprintf ppf "drop (vars=[%a], names=[%a])"
+                    (pp_print_comma_list pp_var) vars
+                    (pp_print_comma_list pp_name) names
+        end
+    | Dup vars ->
+        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
+        fprintf ppf "dup (%a)"
+            (pp_print_comma_list pp_var) vars
 and pp_value ppf v =
-    let value = WithPos.node v in
+    pp_value_node ppf (WithIrMetadata.node v)
+and pp_value_node ppf value =
     match value with
     (* Might want, at some stage, to print out pretype info *)
     | VAnnotate (value, ty) ->
@@ -282,6 +425,7 @@ and pp_value ppf v =
     | Atom name -> Format.pp_print_string ppf (":" ^ name)
     | Primitive prim -> Format.pp_print_string ppf prim
     | Variable (var, _) -> Var.pp ppf var
+    | Name runtime_name -> RuntimeName.pp ppf runtime_name
     | Constant c -> Constant.pp ppf c
     | Tuple vs ->
         fprintf ppf "%a" (pp_print_comma_list pp_value) vs
@@ -298,7 +442,7 @@ and pp_value ppf v =
             Type.pp result_type
             pp_comp body
 and pp_guard ppf guard_with_pos =
-    let guard_node = WithPos.node guard_with_pos in
+    let guard_node = WithIrMetadata.node guard_with_pos in
     match guard_node with
     | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
             let receive_keyword = match strategy with
@@ -327,9 +471,10 @@ let is_free_guard = function
     | _ -> false
 
 let is_fail_guard guard =
-    match WithPos.node guard with
+    match WithIrMetadata.node guard with
     | Fail -> true
     | _ -> false
+
 
 
 (* Substitutes a pattern solution through the program *)

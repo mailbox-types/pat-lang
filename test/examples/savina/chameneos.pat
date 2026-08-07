@@ -124,7 +124,9 @@ def main(n: Int) : Unit {
   spawn { mall(m) } ;
   launch(0, m);
   launch(1, m);
-  launch(2, m)
+  launch(2, m);
+  launch(2, m);
+  launch(1, m)
 }
 
 main(10)

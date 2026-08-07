@@ -115,12 +115,6 @@ let substitute_solutions constrs =
             PVarMap.add var hk_sol map
         ) PVarMap.empty (PVarMap.bindings constrs |> List.stable_sort (cmp))
     in
-    (*
-    Printf.printf "Top to bottom:\n";
-        PVarMap.iter (fun k p ->
-            Format.(fprintf std_formatter "%s: %a\n" k Pattern.pp p)
-        ) top_to_bottom;
-    *)
     (* Bottom to top *)
     let bottom_to_top =
         List.fold_left (fun map (var, pat) ->
@@ -130,12 +124,6 @@ let substitute_solutions constrs =
          PVarMap.empty
         (PVarMap.bindings top_to_bottom |> List.stable_sort (cmp) |> List.rev)
     in
-    (*
-    Printf.printf "Bottom to top:\n";
-        PVarMap.iter (fun k p ->
-            Format.(fprintf std_formatter "%s: %a\n" k Pattern.pp p)
-        ) bottom_to_top;
-    *)
     (* Simplify constraint system *)
     PVarMap.mapi (
         fun key pat ->
@@ -185,9 +173,6 @@ module LinearSet = struct
     let product (base1, periods1) (base2, periods2) =
         (TagBag.sum base1 base2, PeriodSet.union periods1 periods2)
 
-        (*
-L(⟨⟩, {}) ∪ L(⟨Get ⨉ 1⟩, {}) ∪ L(⟨Get ⨉ 2⟩, {⟨Get ⨉ 1⟩})
-*)
     let pp ppf (base, period) =
         let open Format in
 
@@ -233,8 +218,7 @@ module SemiLinearSet = struct
         of_list [LinearSet.one; inner]
 
     (* Translates a pattern (commutative regular expression) into a semilinear
-       set.
-       Quite similar to the "pattern semantics" in ECOOP'18. *)
+       set. *)
     let rec of_pattern =
         let open Pattern in
         function
@@ -351,10 +335,6 @@ let constraint_to_goal constr =
         |> StringSet.elements in
     let semilinear_lhs = SemiLinearSet.of_pattern lhs in
     let semilinear_rhs = SemiLinearSet.of_pattern rhs in
-    (*
-    Format.printf "Semilinear set of LHS: %a\n" SemiLinearSet.pp semilinear_lhs;
-    Format.printf "Semilinear set of RHS: %a\n" SemiLinearSet.pp semilinear_rhs;
-    *)
     let presburger_lhs = semilinear_to_presburger tags semilinear_lhs in
     let presburger_rhs = semilinear_to_presburger tags semilinear_rhs in
     Presburger.make_goal tags presburger_lhs presburger_rhs

@@ -1,6 +1,6 @@
 all:
 	@if dune build; then\
-		ln -sf _build/default/bin/main.exe mbcheck;\
+		ln -sf _build/default/bin/main.exe pat;\
 	fi
 
 .PHONY: test
@@ -13,13 +13,13 @@ pin:
 
 .PHONY: install
 install:
-	opam reinstall mbcheck
+	opam reinstall pat
 
 .PHONY: uninstall
 uninstall:
-	opam remove mbcheck
+	opam remove pat
 
 .PHONY: clean
 clean:
 	dune clean
-	rm -f mbcheck
+	rm -f pat

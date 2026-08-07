@@ -31,12 +31,20 @@ let parse_and_print lexbuf =
   program
 
 let parse_file filename () =
-  let inx = In_channel.open_text filename in
-  let lexbuf = Lexing.from_channel inx in
-  lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-  let expr = parse_and_print lexbuf in
-  In_channel.close inx;
-  expr
+  try
+    In_channel.with_open_text filename (fun inx ->
+      let lexbuf = Lexing.from_channel inx in
+      lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
+      parse_and_print lexbuf)
+  with
+  | Sys_error _ when not (Sys.file_exists filename) ->
+    raise (Errors.parse_error
+      (Format.asprintf "Cannot open input file '%s': file does not exist." filename)
+      [])
+  | Sys_error msg ->
+    raise (Errors.parse_error
+      (Format.asprintf "Cannot open input file '%s': %s" filename msg)
+      [])
 
 let parse_string x () =
   let lexbuf = Lexing.from_string x in

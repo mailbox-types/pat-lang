@@ -2,9 +2,10 @@
 import sys
 import json
 import subprocess
+import re
 
 # Assumes the file is run from the tests directory, and that the executable
-# is located at "../mbcheck"
+# is located at "../pat"
 
 def error(msg):
     print(msg, file=sys.stderr)
@@ -12,29 +13,66 @@ def error(msg):
 
 def run_tests(testsuite):
     overall_result = True
-    executable = "../mbcheck"
+    executable = "../pat"
+
+    def normalise_output(output):
+        return output.replace("\r\n", "\n")
+
     # Runs a test group, checking the exit code
-    # Later, we may wish to also check stdout and stderr
     def run_group(group):
+        nonlocal overall_result
         print("===", "Group:", group["group"], "===")
         for test in group["tests"]:
-            process_result = \
-                subprocess.run([executable, test["filename"]], \
-                               stdout=subprocess.DEVNULL, \
-                               stderr=subprocess.DEVNULL)
+            command = [executable] + test.get("args", []) + [test["filename"]]
+            process_result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
             result = True
+            stdout = normalise_output(process_result.stdout)
+            stderr = normalise_output(process_result.stderr)
+
             if "exit_code" in test:
                 result = (result and process_result.returncode == test["exit_code"])
+            if "stdout" in test:
+                result = (result and stdout == test["stdout"])
+            if "stderr" in test:
+                result = (result and stderr == test["stderr"])
+            if "stdout_regex" in test:
+                result = (result and re.fullmatch(test["stdout_regex"], stdout) is not None)
+            if "stderr_regex" in test:
+                result = (result and re.fullmatch(test["stderr_regex"], stderr) is not None)
+
             result_str = "PASS" if result else "FAIL"
             print(f"{test['name']}: ({result_str})")
             if not result:
                 overall_result = False
+                print("  Command:", " ".join(command))
+                print("  Exit code:", process_result.returncode)
+                if "exit_code" in test:
+                    print("  Expected exit code:", test["exit_code"])
+                if "stdout" in test:
+                    print("  Expected stdout:", repr(test["stdout"]))
+                    print("  Actual stdout:  ", repr(stdout))
+                if "stdout_regex" in test:
+                    print("  Expected stdout regex:", repr(test["stdout_regex"]))
+                    print("  Actual stdout:        ", repr(stdout))
+                if "stderr" in test:
+                    print("  Expected stderr:", repr(test["stderr"]))
+                    print("  Actual stderr:  ", repr(stderr))
+                if "stderr_regex" in test:
+                    print("  Expected stderr regex:", repr(test["stderr_regex"]))
+                    print("  Actual stderr:        ", repr(stderr))
 
     if "groups" in testsuite:
         for group in testsuite["groups"]:
             run_group(group)
     else:
         error("Malformed testsuite: expected 'groups'")
+
+    return overall_result
 
 
 def main():
@@ -47,7 +85,8 @@ def main():
     # Open and parse test suite, then run
     with open(test_suite, 'r') as testsuite:
         parsed = json.loads(testsuite.read())
-        run_tests(parsed)
+        overall_result = run_tests(parsed)
+        sys.exit(0 if overall_result else 1)
 
 if __name__ == "__main__":
     main()

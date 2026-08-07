@@ -4,4 +4,4 @@ def main(): Int {
     in x + x
 }
 
-main()
+print(intToString(main()))

@@ -5,9 +5,9 @@
   (flags "--table") ;; slower parser, but compilation *much* faster
 )
 (library (name frontend)
- (public_name mbcheck.frontend)
+ (public_name pat.frontend)
  (preprocess ( staged_pps ppx_import visitors.ppx ppx_deriving.show))
- (libraries common util typecheck menhirLib)
+ (libraries common util typecheck interp menhirLib)
  (modules :standard)
 ;(rule
 ;(targets parser.mli parser.ml)

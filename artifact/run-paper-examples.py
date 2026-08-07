@@ -38,7 +38,7 @@ EXAMPLES =\
 
 def run_example(name, path):
     print("Checking " + name)
-    subprocess.run(["./mbcheck " + path], shell=True)
+    subprocess.run(["./pat " + path], shell=True)
     print()
 
 def run_examples():

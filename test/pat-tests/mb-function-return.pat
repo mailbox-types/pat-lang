@@ -1,8 +1,9 @@
 interface Test { }
 
 def main(): Unit {
-    let f = fun(x: Test?): Test? { x } in
-    free(f(new[Test]))
+    let f = fun(x: Test?): Test? { print("Returning x!"); x } in
+    free(f(new[Test]));
+    print("Freed!")
 }
 
 main()

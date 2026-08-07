@@ -3,4 +3,4 @@ def main(): Int {
     x
 }
 
-main()
+print(intToString(main()))

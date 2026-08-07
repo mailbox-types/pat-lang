@@ -26,22 +26,22 @@ evaluation; and will allow you to test your own examples.
 
 ### Sample evaluation workflow
 
-  1. `cd mbcheck` into the project directory.
-  2. Build the `mbcheck` binary by running `make`.
+  1. `cd pat` into the project directory.
+  2. Build the `pat` binary by running `make`.
   2. Run the test suite by running `make test`.
   3. Try the examples from the paper (see the "Mapping to Paper" section)
   4. Generate the table from section 6 by running `./generate-table.py`. (Note,
      this is set to perform 100 iterations by default; you can change this by
      modifying the `REPETITIONS` parameter)
   5. Try your own examples, if you like! You can invoke the typechecker by
-     `./mbcheck <name>`. It will exit silently if the example typechecks. If you
+     `./pat <name>`. It will exit silently if the example typechecks. If you
      would like to see the inferred and simplified patterns, use the `-v` option.
   6. Have a look at the salient parts of the implementation (see the "Navigating
      the source code" section)
 
 ### Tool options
 
-Invoke `mbcheck` as `./mbcheck <options> filename`. The options are as follows:
+Invoke `pat` as `./pat <options> filename`. The options are as follows:
   * `-v`: verbose mode; outputs program with solved constraints
   * `-d`: debug mode; outputs detailed information about pattern constraints
   * `-b <count>` or `--benchmark=<count>`: output mean time taken to typecheck
@@ -80,7 +80,7 @@ You can run all of these using the `./run-paper-examples.py` script.
 
 ### Language guide & build / installation instructions
 A guide to the language, as well as build and installation instructions, can be
-found in `mbcheck/README.md`.
+found in `pat/README.md`.
 
 ### Difference between core calculus and concrete syntax
 
@@ -110,7 +110,7 @@ following syntactic modifications:
 
 ### Navigating the source code
 
-The source code can be found in the `mbcheck` directory. Salient code locations
+The source code can be found in the `pat` directory. Salient code locations
 are as follows:
 
   * `bin/main.ml`: main entry point / command line processing

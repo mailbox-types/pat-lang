@@ -1,8 +1,8 @@
-# MBCheck: A typechecker for the Pat language
+# The Pat Programming Language
 
 ## About
-This project is a typechecker for the Pat language, introduced in the paper
-[Special Delivery: Programming with Mailbox Types](https://simonjf.com/drafts/pat-draft-mar23.pdf).
+This project is a typechecker and interpreter for the Pat programming language, introduced in the paper
+[Special Delivery: Programming with Mailbox Types](https://dl.acm.org/doi/10.1145/3607832).
 
 This paper extends the mailbox typing discipline
 introduced by de' Liguoro and Padovani at ECOOP 2018
@@ -18,7 +18,8 @@ Several core ideas of our typechecking algorithm originated in the following, bo
 
 ## Installation
 
-The type checker for `Pat` is developed in OCaml, a general-purpose functional programming language. OCaml can be installed by following these instructions.
+`Pat` is implemented in OCaml, a general-purpose functional programming language. As the interpreter uses the EIO library, Pat requires OCaml 5.
+OCaml can be installed by following these instructions.
 
 ### macOS
 
@@ -67,7 +68,7 @@ $ eval $(opam env --switch=default)
 `Pat` can be cloned from this GitHub repository as follows.
 
 ```bash
-$ git clone https://github.com/SimonJF/mbcheck.git
+$ git clone https://github.com/mailbox-types/pat-lang
 ```
 
 The `Pat` type checker uses a number of OCaml libraries that should be installed prior to compiling it.
@@ -79,18 +80,65 @@ $ opam install dune menhir ppx_import visitors cmdliner z3 bag
 The type-checking tool can then be compiled using `make` after installing these dependencies.
 
 ```bash
-$ cd mbcheck
-mbcheck$ make
+$ cd pat-lang
+$ make
 ```
 
 
 ## Running
 
-Usage: `./mbcheck <file>`. If the program completes successfully, then the
-program is correct.
+Usage: `./pat [options] <file>`. If the program completes successfully, then the
+program typechecks and is interpreted by default.
 
-For more information, you can use the `-d` (debug) and `-v` (verbose) flags --
-although the outputs of these are currently pretty unpleasant :)
+### Arguments
+
+`<file>`
+: Path to the Pat source file to typecheck (required positional argument).
+
+`-v`, `--verbose`
+: Print verbose typechecking information.
+
+`-d`, `--debug`
+: Print debug information (including backtraces on internal errors).
+
+`--ir`
+: Print the translated intermediate representation (IR).
+
+`--show-ref-counting`
+: Run and print the IR after reference counting insertion.
+
+`-t`, `--typecheck-only`
+: Skip interpretation and perform typechecking only.
+
+`--mode <MODE>`
+: Choose typechecking mode for `receive` blocks. Allowed values:
+  `strict`, `interface`, `none`.
+  Default: `interface`.
+
+`-b <BENCHMARK>`, `--benchmark <BENCHMARK>`
+: Number of repetitions for benchmark runs.
+  Use `-1` (default) to disable benchmarking.
+
+`-q`, `--disable-quasilinearity`
+: Disable quasilinearity checking.
+
+`-j`, `--join-not-combine`
+: Use sequential join for value subterms instead of requiring disjointness.
+
+`-dt`, `--liberal-datatypes`
+: Allow data contained in datatypes to be usable (may impact soundness).
+
+### Example
+
+```bash
+./pat --mode strict --verbose test/examples/future.pat
+```
+
+Typecheck only (no interpreter):
+
+```bash
+./pat --typecheck-only test/examples/future.pat
+```
 
 ## Mailbox Types
 
@@ -111,19 +159,20 @@ There are various patterns:
   * M: a message with tag M
   * E + F: either pattern E or pattern F
   * E . F: pattern E or F in any order
-  * *E: many instances of pattern E
+  * E*: many instances of pattern E
 
 As a concrete example, the receive endpoint for an empty future can be given the
 type
 
-  ?(Put.*Get)
+  ?(Put.Get*)
 
 which states that the mailbox contains at most one Put message and many Get
 messages; this would rule out the invalid behaviour of sending two Put messages.
 
 ## Base types
 
-Pat also supports base types: String, Int, Bool.
+Pat also supports base types (String, Int, Bool) along with n-ary tuples and sum types.
+User-defined algebraic datatypes are coming soon.
 
 ## Usable vs. Returnable Types
 

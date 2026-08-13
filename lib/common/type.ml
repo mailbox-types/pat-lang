@@ -253,8 +253,7 @@ type t =
     | Base of base
     | Fun of { linear: bool; args: t list; result: t }
     | Tuple of t list
-    | Sum of (t * t)
-    | List of t
+    | Rec of (string * t list)
     | Mailbox of {
         capability: (Capability.t [@name "capability"]);
         interface: string;
@@ -288,9 +287,8 @@ let is_mailbox_type = function
 
 let rec contains_mailbox_type = function
     | Mailbox _ -> true
-    | Sum (t1, t2) -> contains_mailbox_type t1 || contains_mailbox_type t2
     | Tuple ts -> List.exists contains_mailbox_type ts
-    | List t -> contains_mailbox_type t
+    | Rec (_, ts) -> List.exists contains_mailbox_type ts
     | _ -> false
 
 (* Easy constructors *)
@@ -324,13 +322,15 @@ let rec pp ppf =
         let pp_star ppf () = pp_print_string ppf " * " in
         fprintf ppf "(%a)"
             (pp_print_list ~pp_sep:(pp_star) pp) ts
-    | Sum (t1, t2) ->
+    | Rec ("Sum", [t1; t2]) ->
         fprintf ppf "(%a + %a)"
             pp t1
             pp t2
-    | List t ->
-        fprintf ppf "List(%a)"
-            pp t
+    | Rec (s, ts) ->
+        let pp_comma ppf () = pp_print_string ppf ", " in
+        fprintf ppf "%s(%a)"
+        s
+        (pp_print_list ~pp_sep:(pp_comma) pp) ts
     | Mailbox { capability; interface; pattern; quasilinearity } ->
         let ql =
             match quasilinearity with
@@ -363,8 +363,7 @@ let rec is_lin = function
     (* !1 is unrestricted... *)
     | Mailbox { capability = Out; pattern = Some One; _ } -> false
     | Tuple ts -> List.exists is_lin ts
-    | Sum (t1, t2) -> is_lin t1 || is_lin t2
-    | List t -> is_lin t
+    | Rec (_, ts) -> List.exists is_lin ts
     (* ...but otherwise a mailbox type must be used linearly. *)
     | Mailbox _ -> true
 
@@ -378,22 +377,13 @@ let is_output_mailbox = function
 
 let rec contains_output_mailbox = function
     | Mailbox { capability = Out; pattern = Some _; _} -> true
-    | Sum (t1, t2) -> contains_output_mailbox t1 || contains_output_mailbox t2
     | Tuple ts -> List.exists contains_output_mailbox ts
-    | List t -> contains_output_mailbox t
+    | Rec (_, ts) -> List.exists contains_output_mailbox ts
     | _ -> false
 
 let is_tuple = function
     | Tuple _ -> true
     | _ -> false
-
-let is_sum = function
-    | Sum _ -> true
-    | _ -> false
-
-let is_list = function
-  | List _ -> true
-  | _ -> false
 
 let get_pattern = function
     | Mailbox { pattern = Some pat; _ } -> pat
@@ -411,8 +401,7 @@ let get_quasilinearity = function
 let rec make_usable = function
     | Mailbox m -> Mailbox { m with quasilinearity = Quasilinearity.Usable }
     | Tuple ts -> Tuple (List.map make_usable ts)
-    | Sum (t1, t2) -> Sum (make_usable t1, make_usable t2)
-    | List t -> List (make_usable t)
+    | Rec (s, ts) -> Rec (s, (List.map make_usable ts))
     | t -> t
 
 (* Tuples, sums, and lists can all be returnable even if they contain things that are not returnable,
@@ -435,6 +424,5 @@ let make_tuple_type tys =
     Tuple (List.map make_returnable tys)
 
 let make_sum_type ty1 ty2 =
-    Sum (make_returnable ty1, make_returnable ty2)
+    Rec ("Sum", [make_returnable ty1; make_returnable ty2])
 
-let make_list_type ty = List ty

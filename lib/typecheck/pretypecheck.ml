@@ -58,6 +58,41 @@ module Gripers = struct
         in
         raise (pretype_error msg [pos])
 
+    let branch_mismatch_with_expected pos typ branch =
+        let msg =
+            asprintf "Invalid branch. Type is %a but constructor '%s' was matched."
+                Pretype.pp typ
+                branch
+        in
+        raise (pretype_error msg [pos])
+
+    let branch_overlap pos dups =
+        let names = String.concat ", " (List.map (fun s -> "'" ^ s ^ "'") dups) in
+        let msg =
+            asprintf "Invalid case statement - %s matched more than once."
+                (if List.length dups = 1
+                 then "constructor " ^ names ^ " is"
+                 else "constructors " ^ names ^ " are")
+        in
+        raise (pretype_error msg [pos])
+
+    let branch_not_enough pos =
+        let msg =
+            asprintf "Invalid case statement - missing branches."
+        in
+        raise (pretype_error msg [pos])
+
+    let branch_not_exhaustive pos typ missing =
+        let names = String.concat ", " (List.map (fun s -> "'" ^ s ^ "'") missing) in
+        let msg =
+            asprintf "Non-exhaustive case: missing %s for type %a."
+                (if List.length missing = 1
+                 then "a branch for constructor " ^ names
+                 else "branches for constructors " ^ names)
+                Pretype.pp typ
+        in
+        raise (pretype_error msg [pos])
+
     let cannot_synth_empty_guards pos () =
         let msg =
             asprintf "Need at least one non-fail guard to synthesise the type for a 'guard' expression."
@@ -70,22 +105,6 @@ module Gripers = struct
         in
         raise (pretype_error msg [pos])
 
-    let cannot_synth_sum (term: value) =
-        let pos = WithPos.pos term in
-        let msg =
-            asprintf "Cannot synthesise a type for a sum constructor %a."
-                Ir.pp_value term
-        in
-        raise (pretype_error msg [pos])
-
-    let cannot_synth_nil (term: value) =
-        let pos = WithPos.pos term in
-        let msg =
-            asprintf
-                "Cannot synthesise a type for an empty list %a"
-                Ir.pp_value term
-        in
-        raise (pretype_error msg [pos])
 end
 
 (* Note: This basically works since we only have mailbox subtyping at present.
@@ -149,10 +168,49 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
             let vs_and_tys = List.map (synthesise_val ienv env) vs in
             let (vs, tys) = List.split vs_and_tys in
             wrap (Tuple vs), Pretype.PTuple tys
-        | Cons (v1, v2) ->
-            let (v1, ty1) = synthesise_val ienv env v1 in
-            let v2 = check_val ienv env v2 (Pretype.PList ty1) in
-            wrap (Cons (v1, v2)), Pretype.PList ty1
+        | Inject (ctor_name, args) ->
+            begin match Recursive_types.find_constructor ctor_name with
+            | None ->
+                raise (Errors.internal_error "pretypecheck.ml"
+                    ("Unknown constructor: " ^ ctor_name))
+            | Some (rec_def, ctor_def) ->
+                (* Try to determine type params by synthesising args *)
+                let params = Array.make rec_def.param_count None in
+                let synth_results = List.map2 (fun arg src ->
+                    let (v, ty) = synthesise_val ienv env arg in
+                    begin match src with
+                    | Recursive_types.Param i -> params.(i) <- Some ty
+                    | Recursive_types.Self ->
+                        begin match ty with
+                        | Pretype.PRec (_, ps) ->
+                            List.iteri (fun i p ->
+                                if params.(i) = None then params.(i) <- Some p) ps
+                        | _ -> ()
+                        end
+                    | Recursive_types.Fixed _ -> ()
+                    end;
+                    (v, ty, src)
+                ) args ctor_def.binder_sources in
+                (* Check all params are known *)
+                let all_known = Array.for_all (fun x -> x <> None) params in
+                if not all_known then
+                    Gripers.type_mismatch_with_expected pos
+                        "a fully-determined recursive type" (Pretype.PTuple [])
+                    |> raise;
+                let params = Array.to_list (Array.map Option.get params) in
+                let self_ty = Pretype.PRec (rec_def.type_name, params) in
+                (* Re-check args against expected types *)
+                let checked_args = List.map2 (fun (v, _synth_ty, src) arg ->
+                    let expected = match src with
+                        | Recursive_types.Param i -> List.nth params i
+                        | Recursive_types.Self -> self_ty
+                        | Recursive_types.Fixed ty -> Pretype.of_type ty
+                    in
+                    ignore v;
+                    check_val ienv env arg expected
+                ) synth_results args in
+                wrap (Inject (ctor_name, checked_args)), self_ty
+            end
         | Lam { linear; parameters; result_type; body } ->
             (* Defer linearity checking to constraint generation. *)
             let param_types  = List.map snd parameters in
@@ -167,30 +225,38 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
             Pretype.PFun {
                 linear = linear;
                 args = param_types;
-                result = result_type 
+                result = result_type
             }
-        | Inl _ | Inr _ -> Gripers.cannot_synth_sum value
-        | Nil -> Gripers.cannot_synth_nil value
 and check_val ienv env value ty =
     let (value_node, pos) = WithPos.(node value, pos value) in
     let wrap = WithPos.make ~pos in
     match value_node, ty with
-        | Inl v, (Pretype.PSum (pty1, _)) ->
-            let v = check_val ienv env v pty1 in
-            wrap (Inl v)
-        | Inr v, (Pretype.PSum (_, pty2)) ->
-            let v = check_val ienv env v pty2 in
-            wrap (Inr v)
-        | Inl _, ty | Inr _, ty ->
-            raise
-                (Gripers.type_mismatch_with_expected pos
-                    "a sum type" ty)
-        | Nil, (Pretype.PList _) ->
-          wrap Nil
-        | Nil, ty ->
-          raise
-            (Gripers.type_mismatch_with_expected pos
-              "a list type" ty)
+        | Inject (ctor_name, args), Pretype.PRec (tname, params) ->
+            begin match Recursive_types.find_constructor ctor_name with
+            | Some (rec_def, ctor_def) when rec_def.type_name = tname ->
+                let self_ty = Pretype.PRec (tname, params) in
+                let expected_tys =
+                    Recursive_types.instantiate_binder_types params self_ty
+                        Pretype.of_type ctor_def.binder_sources
+                in
+                let checked_args = List.map2 (check_val ienv env) args expected_tys in
+                wrap (Inject (ctor_name, checked_args))
+            | _ ->
+                let value, inferred_ty = synthesise_val ienv env value in
+                check_tys [pos] ty inferred_ty;
+                value
+            end
+        | Inject (ctor_name, _), ty ->
+            begin match Recursive_types.find_constructor ctor_name with
+            | Some (rec_def, _) ->
+                raise
+                    (Gripers.type_mismatch_with_expected pos
+                        ("a " ^ rec_def.type_name ^ " type") ty)
+            | None ->
+                let value, inferred_ty = synthesise_val ienv env value in
+                check_tys [pos] ty inferred_ty;
+                value
+            end
         | _ ->
             let value, inferred_ty = synthesise_val ienv env value in
             check_tys [pos] ty inferred_ty;
@@ -226,18 +292,75 @@ and synthesise_comp ienv env comp =
             let env' = PretypeEnv.bind (Var.of_binder binder) term_ty env in
             let cont, cont_ty = synthesise_comp ienv env' cont in
             WithPos.make ~pos (Let { binder; term; cont }), cont_ty
-        | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
+        | Case { term; ty = ty1; branches } ->
             let prety1 = Pretype.of_type ty1 in
-            let prety2 = Pretype.of_type ty2 in
             let term =
-                check_val ienv env term (Pretype.PSum (prety1, prety2))
+                check_val ienv env term prety1
             in
-            let e1_env = PretypeEnv.bind (Var.of_binder bnd1) prety1 env in
-            let e2_env = PretypeEnv.bind (Var.of_binder bnd2) prety2 env in
-            let e1, e1_ty = synthesise_comp ienv e1_env e1 in
-            let e2 = check_comp ienv e2_env e2 e1_ty in
+            let branch_tys =
+                match prety1 with
+                    | Pretype.PRec (tname, params) ->
+                        begin match Recursive_types.find_type tname with
+                        | Some def ->
+                            Recursive_types.constructor_types def params prety1 Pretype.of_type
+                        | None ->
+                            raise
+                                (Gripers.type_mismatch_with_expected pos
+                                 "a recursive type" prety1)
+                        end
+                    | _ ->
+                        raise
+                            (Gripers.type_mismatch_with_expected pos
+                             "a recursive type" prety1)
+            in
+            (* Validate branch names and check for duplicates *)
+            let () = List.iter (fun (_, _, bname) ->
+                if not (List.mem_assoc bname branch_tys) then
+                    raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+            ) branches in
+            let branch_names = List.map (fun (_, _, s) -> s) branches in
+            let () =
+                let dups = List.sort_uniq String.compare
+                    (List.filter (fun x ->
+                        List.length (List.filter (( = ) x) branch_names) > 1
+                    ) branch_names)
+                in
+                if dups <> [] then raise (Gripers.branch_overlap pos dups)
+            in
+            (* Check exhaustiveness: every constructor of the type must have a branch *)
+            let () =
+                let all_ctors = List.map fst branch_tys in
+                let missing = List.filter (fun c -> not (List.mem c branch_names)) all_ctors in
+                if missing <> [] then raise (Gripers.branch_not_exhaustive pos prety1 missing)
+            in
+            (* Sort branches into canonical order *)
+            let sorted_branches = List.sort (fun (_, _, s1) (_, _, s2) -> String.compare s1 s2) branches in
+            (* Look up binder types for each branch *)
+            let lookup_tys bname =
+                match List.assoc_opt bname branch_tys with
+                    | Some tys -> tys
+                    | None -> raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+            in
+            (* Type-check each branch *)
+            let checked_branches, result_ty =
+                match sorted_branches with
+                | [] -> raise (Gripers.branch_not_enough pos)
+                | (bnds1, e1, s1) :: rest ->
+                    let tys1 = lookup_tys s1 in
+                    let vars_and_tys1 = List.combine (List.map Var.of_binder bnds1) tys1 in
+                    let e1_env = PretypeEnv.bind_many vars_and_tys1 env in
+                    let e1, e1_ty = synthesise_comp ienv e1_env e1 in
+                    let checked_rest = List.map (fun (bnds, e, sname) ->
+                        let tys = lookup_tys sname in
+                        let vars_and_tys = List.combine (List.map Var.of_binder bnds) tys in
+                        let e_env = PretypeEnv.bind_many vars_and_tys env in
+                        let e = check_comp ienv e_env e e1_ty in
+                        (bnds, e, sname)
+                    ) rest in
+                    (bnds1, e1, s1) :: checked_rest, e1_ty
+            in
             WithPos.make ~pos
-                (Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) }), e1_ty
+                (Case { term; ty = ty1; branches = checked_branches }), result_ty
         | LetTuple { binders; tuple; cont } ->
             let bnds = List.map fst binders in
             let tuple, tuple_ty = synthv tuple in
@@ -267,24 +390,6 @@ and synthesise_comp ienv env comp =
             let cont, cont_ty = synthesise_comp ienv env' cont in
             WithPos.make ~pos
                 (LetTuple { binders; tuple; cont }), cont_ty
-        | CaseL { term = scrutinee; ty = ty1; nil = e1; cons = ((bnd1, bnd2), e2) } ->
-            let prety1 = Pretype.of_type ty1 in
-            let scrutinee =
-              check_val ienv env scrutinee prety1
-            in
-            let ty2 = match prety1 with
-              | Pretype.PList ty2 -> ty2
-              | _ -> raise (Gripers.type_mismatch_with_expected pos "a list type" prety1)
-            in
-            let b1_env = PretypeEnv.bind (Var.of_binder bnd1) ty2 env in
-            let b2_env = PretypeEnv.bind (Var.of_binder bnd2) prety1 b1_env in
-            let e2, b2_ty = synthesise_comp ienv b2_env e2 in
-            let e1 = check_comp ienv b2_env e1 b2_ty in
-            WithPos.make ~pos
-              (CaseL { term = scrutinee;
-                       ty = ty1;
-                       nil = e1;
-                       cons = ((bnd1, bnd2), e2) }), b2_ty
         | Seq (e1, e2) ->
             let e1 = check_comp ienv env e1 (Pretype.unit) in
             let e2, e2_ty = synth e2 in

@@ -97,13 +97,6 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                               pattern = Some pat;
                               quasilinearity = ql
                           }, constrs
-                | List ty1, List ty2 ->
-                    let ty, constrs = join_types var ty1 ty2 in
-                    List ty, constrs
-                | Sum (t1l, t1r), Sum (t2l, t2r) ->
-                    let tl, constrs1 = join_types var t1l t2l in
-                    let tr, constrs2 = join_types var t1r t2r in
-                    Sum (tl, tr), Constraint_set.union constrs1 constrs2
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 ->
@@ -111,7 +104,15 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
-                    Tuple ts, constrs
+                    Tuple (List.rev ts), constrs
+                | Rec (s1, ts1), Rec (s2, ts2) when s1 = s2 ->
+                    let (ts, constrs) =
+                        List.fold_left2 (fun (acc, constrs) t1 t2 ->
+                            let t, t_constrs = join_types var t1 t2 in
+                            t :: acc, Constraint_set.union t_constrs constrs)
+                        ([], Constraint_set.empty) ts1 ts2
+                    in
+                    Rec (s1, List.rev ts), constrs
                 | _, _ ->
                     Gripers.type_mismatch true t1 t2 var [pos]
         in
@@ -241,13 +242,6 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                               (* Must take strongest QL across all branches. *)
                               quasilinearity = Quasilinearity.max ql1 ql2
                           }, constrs
-                | List t1, List t2 ->
-                    let ty, constrs = intersect_types var t1 t2 in
-                    List ty, constrs
-                | Sum (t1l, t1r), Sum (t2l, t2r) ->
-                    let tl, constrs1 = intersect_types var t1l t2l in
-                    let tr, constrs2 = intersect_types var t1r t2r in
-                    Sum (tl, tr), Constraint_set.union constrs1 constrs2
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 -> 
@@ -255,7 +249,16 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
-                    Tuple ts, constrs
+                    Tuple (List.rev ts), constrs
+                | Rec (s1, ts1), Rec (s2, ts2) ->
+                    if s1 <> s2 then Gripers.type_mismatch false t1 t2 var [pos]
+                    else let (ts, constrs) =
+                        List.fold_left2 (fun (acc, constrs) t1 t2 ->
+                            let t, t_constrs = intersect_types var t1 t2 in
+                            t :: acc, Constraint_set.union t_constrs constrs)
+                        ([], Constraint_set.empty) ts1 ts2
+                    in
+                    Rec (s1, List.rev ts), constrs
                 | _, _ ->
                     Gripers.type_mismatch false t1 t2 var [pos]
         in
@@ -289,7 +292,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                 | Mailbox { capability = Out; interface; quasilinearity; pattern = Some pat } ->
                           let pat = Pattern.Plus (pat, Pattern.One) in
                           Mailbox { capability = Out; interface; quasilinearity; pattern = Some pat }
-                | List ty -> List (relax_send_type ty)
+                | Rec (s, ts) -> Rec (s, List.map relax_send_type ts)
                 | _ ->
                   raise (Errors.internal_error "ty_env.ml" "error in disjoint MB combination")
               in

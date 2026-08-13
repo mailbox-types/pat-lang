@@ -116,10 +116,9 @@ and transform_expr :
         | Annotate (body, annotation) ->
             with_same_pos (Ir.Annotate (transform_expr env body id, annotation))
             |> k env
-        | Inl e ->
-            transform_subterm env e (fun env v -> with_same_pos (Ir.Return (with_same_pos (Ir.Inl v))) |> k env)
-        | Inr e ->
-            transform_subterm env e (fun env v -> with_same_pos (Ir.Return (with_same_pos (Ir.Inr v))) |> k env)
+        | Inject (name, es) ->
+            transform_exprs env es (fun _ vs ->
+                with_same_pos (Ir.Return (with_same_pos (Ir.Inject (name, vs)))) |> k env)
         (* Note that annotation will have been desugared to subject annotation *)
         | Let {binder; term; body; _} ->
             (* let x = M in N*)
@@ -139,11 +138,6 @@ and transform_expr :
         | Tuple es ->
             transform_exprs env es (fun _ vs ->
                 with_same_pos (Ir.Return (with_same_pos (Ir.Tuple vs))) |> k env)
-        | Nil -> with_same_pos (Ir.Return (with_same_pos (Ir.Nil))) |> k env
-        | Cons (e1, e2) ->
-            transform_subterm env e1 (fun _ v1 ->
-            transform_subterm env e2 (fun _ v2 ->
-                with_same_pos (Ir.Return (with_same_pos (Ir.Cons (v1, v2)))) |> k env))
         | LetTuple {binders = bs; term; cont; _ } ->
             (* let x = M in N*)
             (* Create IR variables based on the binders *)
@@ -162,31 +156,17 @@ and transform_expr :
                         cont = transform_expr env' cont k }))
         | Case {
             term;
-            branch1 = ((bnd1, ty1), comp1);
-            branch2 = ((bnd2, ty2), comp2) } ->
+            ty = ty1;
+            branches } ->
             transform_subterm env term (fun env v ->
-                let (ir_bnd1, env1) = add_name env bnd1 in
-                let (ir_bnd2, env2) = add_name env bnd2 in
+                let ir_branches = List.map (fun (bnds, comp, s) ->
+                    let (ir_bnds, branch_env) = add_names env (fun x -> x) bnds in
+                    (ir_bnds, (transform_expr branch_env comp id), s)) branches in
                 with_same_pos (
                 Ir.Case {
                     term = v;
-                    branch1 = (ir_bnd1, ty1), (transform_expr env1 comp1 id);
-                    branch2 = (ir_bnd2, ty2), (transform_expr env2 comp2 id);
-                }) |> k env)
-        | CaseL {
-            term;
-            ty = ty1;
-            nil = comp1;
-            cons = ((bnd1, bnd2), comp2) } ->
-            transform_subterm env term (fun env v ->
-                let (ir_bnd1, env1) = add_name env bnd1 in
-                let (ir_bnd2, env2) = add_name env1 bnd2 in
-                with_same_pos (
-                Ir.CaseL {
-                    term = v;
                     ty = ty1;
-                    nil = (transform_expr env comp1 id);
-                    cons = (ir_bnd1, ir_bnd2), (transform_expr env2 comp2 id);
+                    branches = ir_branches;
                 }) |> k env)
         | Seq (e1, e2) ->
             transform_expr env e1 (fun env c1 ->

@@ -91,13 +91,13 @@ def choose_dst_acc(tellerMb: TellerMb!, numAccounts: Int, srcAccount: (Unit + Ac
   
     (let amount = rand(200) in
           case srcAccount : (Unit + AccountMb!) of {
-          inl(u1) : Unit -> case dstAccount : (Unit + AccountMb!) of {
-              inl(u2) : Unit -> ()
-              | inr(d) : AccountMb! -> ()
+          inl(u1) -> case dstAccount : (Unit + AccountMb!) of {
+              inl(u2) -> ()
+              | inr(d) -> ()
           }
-          | inr(a) : AccountMb! -> case dstAccount : (Unit + AccountMb!) of {
-              inl(u) : Unit -> ()
-              | inr(d) : AccountMb! -> d ! Credit(tellerMb, amount, a)
+          | inr(a) -> case dstAccount : (Unit + AccountMb!) of {
+              inl(u) -> ()
+              | inr(d) -> d ! Credit(tellerMb, amount, a)
           }
         }))
 }

@@ -26,10 +26,9 @@ let rec make_unrestricted t pos =
         | Tuple tys ->
             Constraint_set.union_many
                 (List.map (fun t -> make_unrestricted t pos) tys)
-        | Sum (ty1, ty2) ->
-            Constraint_set.union (make_unrestricted ty1 pos) (make_unrestricted ty2 pos)
-        | List ty ->
-            make_unrestricted ty pos
+        | Rec (_, tys) ->
+            Constraint_set.union_many
+                (List.map (fun t -> make_unrestricted t pos) tys)
         | _ -> assert false
 
 (* Auxiliary definitions*)
@@ -46,16 +45,15 @@ let rec subtype_type :
             | Base b1, Base b2 when b1 = b2->
                         Constraint_set.empty
 
-            (* Subtyping covariant for tuples and sums *)
+            (* Subtyping covariant for tuples and recursive types *)
             | Tuple tyas, Tuple tybs ->
                 Constraint_set.union_many
                     (List.map (fun (tya, tyb) -> subtype_type visited ienv tya tyb pos)
                         (List.combine tyas tybs))
-            | Sum (tya1, tya2), Sum (tyb1, tyb2) ->
-                Constraint_set.union
-                    (subtype_type visited ienv tya1 tyb1 pos)
-                    (subtype_type visited ienv tya2 tyb2 pos)
-            | List ty1, List ty2 -> subtype_type visited ienv ty1 ty2 pos
+            | Rec (_, tyas), Rec (_, tybs) ->
+                Constraint_set.union_many
+                    (List.map (fun (tya, tyb) -> subtype_type visited ienv tya tyb pos)
+                        (List.combine tyas tybs))
             | Mailbox { pattern = None; _ }, _
             | _, Mailbox { pattern = None; _ } ->
                     (* Should have been sorted by annotation pass *)

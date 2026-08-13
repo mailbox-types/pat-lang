@@ -155,11 +155,9 @@ and check_val :
             | Tuple ts, PTuple pts ->
                 List.combine ts pts
                 |> List.iter (uncurry check_pretype_consistency)
-            | Sum (t1, t2), PSum (pt1, pt2) ->
-                check_pretype_consistency t1 pt1;
-                check_pretype_consistency t2 pt2
-            | List t, PList pt ->
-                check_pretype_consistency t pt
+            | Rec (_, ts), PRec (_, pts) ->
+                List.combine ts pts
+                |> List.iter (uncurry check_pretype_consistency)
             | _, _ -> Gripers.pretype_consistency ty pty [pos]
     in
     match WithPos.node v with
@@ -170,35 +168,34 @@ and check_val :
         | Variable (v, Some pty) ->
             check_pretype_consistency ty pty;
             Ty_env.singleton v ty, Constraint_set.empty
-        | Inl v ->
-            begin
+        | Inject (ctor_name, args) ->
+            begin match Recursive_types.find_constructor ctor_name with
+            | None ->
+                raise (Errors.internal_error "gen_constraints.ml"
+                    ("Unknown constructor: " ^ ctor_name))
+            | Some (rec_def, ctor_def) ->
                 match ty with
-                    | Type.Sum (t1, _) ->
-                        check_val ienv decl_env v (Type.make_returnable t1)
-                    | _ -> Gripers.expected_sum_type ty [pos]
-            end
-        | Inr v ->
-            begin
-                match ty with
-                    | Type.Sum (_, t2) ->
-                        check_val ienv decl_env v (Type.make_returnable t2)
-                    | _ -> Gripers.expected_sum_type ty [pos]
-            end
-        | Nil ->
-            begin
-                match ty with
-                    | Type.List _ -> Ty_env.empty, Constraint_set.empty
-                    | _ -> Gripers.expected_list_type ty [pos]
-            end
-        | Cons (v1, v2) ->
-            begin
-                match ty with
-                    | Type.List t ->
-                        let (env1, constrs1) = check_val ienv decl_env v1 t in
-                        let (env2, constrs2) = check_val ienv decl_env v2 ty in
-                        let env, constrs3 = Ty_env.combine ienv env1 env2 pos in
-                        env, Constraint_set.union_many [constrs1; constrs2; constrs3]
-                    | _ -> Gripers.expected_list_type ty [pos]
+                | Type.Rec (tname, params) when tname = rec_def.type_name ->
+                    let self_ty = ty in
+                    let expected_tys =
+                        Recursive_types.instantiate_binder_types params self_ty
+                            (fun ty -> ty) ctor_def.binder_sources
+                    in
+                    (* Apply make_returnable to Param types when no Self sources *)
+                    let expected_tys =
+                        if Recursive_types.has_self_source ctor_def then expected_tys
+                        else List.map Type.make_returnable expected_tys
+                    in
+                    let envs_and_constrs =
+                        List.map2 (check_val ienv decl_env) args expected_tys
+                    in
+                    let envs = List.map fst envs_and_constrs in
+                    let constrs = List.map snd envs_and_constrs in
+                    let env, combine_constrs =
+                        Ty_env.combine_many ienv envs pos
+                    in
+                    env, Constraint_set.union_many (combine_constrs :: constrs)
+                | _ -> Gripers.expected_recursive_type ty [pos]
             end
         | Tuple vs ->
             let ts =
@@ -421,80 +418,63 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
     let pos = WithPos.pos e in
     match (WithPos.node e) with
         | Return v -> check_val ienv decl_env v ty
-        | Case { term; branch1 = ((bnd1, ty1), comp1); branch2 = ((bnd2, ty2), comp2) } ->
-            let (term_env, term_constrs) =
-                check_val ienv decl_env term (Type.make_sum_type ty1 ty2)
-            in
-            let var1 = Var.of_binder bnd1 in
-            let var2 = Var.of_binder bnd2 in
-            (* Check both branches, and check that inferred types match annotations *)
-            let (comp1_env, comp1_constrs) = chk comp1 ty in
-            let (comp2_env, comp2_constrs) = chk comp2 ty in
-            let env1_constrs = Ty_env.check_type ienv var1 ty1 comp1_env pos in
-            let env2_constrs = Ty_env.check_type ienv var2 ty2 comp2_env pos in
-            (* Calculate merge of the branches (sans binders) *)
-            let isect_env, isect_constrs =
-                Ty_env.intersect
-                    (Ty_env.delete var1 comp1_env)
-                    (Ty_env.delete var2 comp2_env)
-                    pos
-            in
-            (* Finally combine the term env with the intersected env *)
-            let env, env_constrs =
-                Ty_env.combine ienv term_env isect_env pos
-            in
-            let constrs =
-                Constraint_set.union_many
-                    [ comp1_constrs; comp2_constrs; env1_constrs;
-                      env2_constrs; isect_constrs; env_constrs; term_constrs ]
-            in
-            (env, constrs)
-        | CaseL { term; ty = ty1; nil = comp1; cons = ((bnd1, bnd2), comp2) } ->
-            let elem_ty =
-                match ty1 with
-                    | Type.List elem_ty -> elem_ty
-                    | _ -> Gripers.expected_list_type ty1 [pos]
-            in
-            (* Check that scrutinee has annotated list type *)
+        | Case { term; ty = ty1; branches } ->
             let (term_env, term_constrs) =
                 check_val ienv decl_env term ty1
             in
-            (* Next, check that comp1 (nil case) has expected return type *)
-            let (comp1_env, comp1_constrs) = chk comp1 ty in
-            (* Next, check that comp2 (cons case) has expected return type *)
-            let (comp2_env, comp2_constrs) = chk comp2 ty in
-            (* Next, check that the inferred types in comp2_env match annotations and that
-               the cons case doesn't contain any troublesome mailbox variables that could 
-               introduce unsafe aliasing *)
-            let var1 = Var.of_binder bnd1 in
-            let var2 = Var.of_binder bnd2 in 
-            let comp2_env_no_binders = Ty_env.delete_many [var1; var2] comp2_env in
-            (* If element type is returnable, we know it's the last lexical occurrence 
-               and we don't need this check. *)
-            let () =
-                if (not (Type.is_returnable elem_ty)) then
-                    Ty_env.check_free_mailbox_variables [elem_ty] comp2_env_no_binders
+            let branch_tys =
+                match ty1 with
+                    | Type.Rec (tname, params) ->
+                        begin match Recursive_types.find_type tname with
+                        | Some def -> Recursive_types.constructor_types def params ty1 (fun ty -> ty)
+                        | None -> raise (Gripers.expected_recursive_type ty1 [pos])
+                        end
+                    | _ ->
+                        raise
+                            (Gripers.expected_recursive_type ty1 [pos])
             in
-            let env_constrs =
-                Constraint_set.union
-                    (Ty_env.check_type ienv var1 elem_ty comp2_env pos)
-                    (Ty_env.check_type ienv var2 ty1 comp2_env pos)
+            let lookup_tys bname =
+                match List.assoc_opt bname branch_tys with
+                    | Some tys -> tys
+                    | None -> raise (Gripers.expected_recursive_type ty1 [pos])
             in
-            (* Calculate merge of the branches (sans binders) *)
-            let isect_env, isect_constrs =
-                Ty_env.intersect
-                  comp1_env
-                  comp2_env_no_binders
-                  pos
+            (* Check each branch and collect environments and constraints *)
+            let branch_results = List.map (fun (bnds, comp, bname) ->
+                let expected_tys = lookup_tys bname in
+                let vars = List.map Var.of_binder bnds in
+                let (comp_env, comp_constrs) = chk comp ty in
+                let comp_env_no_binders = Ty_env.delete_many vars comp_env in
+                let () =
+                    if (not (Type.is_returnable ty1)) then
+                        Ty_env.check_free_mailbox_variables [ty1] comp_env_no_binders
+                in
+                let env_constrs =
+                    Constraint_set.union_many
+                        (List.map2 (fun var ty -> Ty_env.check_type ienv var ty comp_env pos) vars expected_tys)
+                in
+                (comp_env_no_binders, Constraint_set.union comp_constrs env_constrs)
+            ) branches in
+            (* Calculate intersection of all branch environments *)
+            let (isect_env, isect_constrs) =
+                match branch_results with
+                | [] -> (Ty_env.empty, Constraint_set.empty)
+                | (env0, _) :: rest ->
+                    List.fold_left (fun (acc_env, acc_constrs) (env_i, _) ->
+                        let (new_env, new_constrs) = Ty_env.intersect acc_env env_i pos in
+                        (new_env, Constraint_set.union acc_constrs new_constrs)
+                    ) (env0, Constraint_set.empty) rest
             in
             (* Finally combine the term env with the intersected env *)
             let env, combine_constrs =
                 Ty_env.combine ienv term_env isect_env pos
             in
+            let all_branch_constrs =
+                Constraint_set.union_many
+                    (List.map snd branch_results)
+            in
             let constrs =
                 Constraint_set.union_many
-                    [ comp1_constrs; comp2_constrs; env_constrs;
-                      combine_constrs; isect_constrs; term_constrs ]
+                    [ all_branch_constrs; isect_constrs; combine_constrs; term_constrs ]
             in
             (env, constrs)
         | Seq (e1, e2) ->

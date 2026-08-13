@@ -14,7 +14,7 @@ let next_line lexbuf =
         { pos with pos_bol = pos.Lexing.pos_cnum;
                    pos_lnum = pos.pos_lnum + 1
         }
-(* Adds a lexeme along with its position to the source code memory, 
+(* Adds a lexeme along with its position to the source code memory,
    enabling accurate error reporting later. *)
 let add_to_source_code lexbuf =
     let lexeme = Lexing.lexeme lexbuf in
@@ -47,10 +47,7 @@ let keywords = [
     "case", CASE;
     "caseL", CASEL;
     "of", OF;
-    "inl", INL;
-    "inr", INR;
-    "nil", NIL;
-    "List", LIST
+    "data", DATA
 ]
 }
 
@@ -77,10 +74,14 @@ rule read =
     | def_id as var { add_to_source_code lexbuf;
                       try List.assoc var keywords
                       with Not_found ->
-                      if Utility.is_uppercase var.[0] then
-                          CONSTRUCTOR var
-                      else
-                          VARIABLE var }
+                      (* Check if it's a registered constructor keyword *)
+                      match Common.Recursive_types.find_constructor_keyword var with
+                      | Some name -> CTOR_KW name
+                      | None ->
+                          if Utility.is_uppercase var.[0] then
+                              CONSTRUCTOR var
+                          else
+                              VARIABLE var }
     | def_atom as atom { add_to_source_code lexbuf; ATOM atom }
     | '"'      { add_to_source_code lexbuf; read_string (Buffer.create 17) lexbuf }
     | '{'      { add_to_source_code lexbuf; LEFT_BRACE }

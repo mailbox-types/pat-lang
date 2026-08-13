@@ -33,6 +33,73 @@ let parse_error x pos_list = Errors.Parse_error (x,pos_list)
 
 let binary_op op_name x1 x2 = App { func = ParserPosition.with_pos ((get_start_pos x1),(get_end_pos x2)) (Primitive op_name); args = [x1; x2] }
 
+(* Data declaration field descriptions *)
+type data_field_desc =
+    | DVar of string
+    | DApp of string * data_field_desc list
+    | DBase of string   (* bare constructor name: base type or 0-param self-ref *)
+
+(* Map a base type name to a Type.t, or None if unknown *)
+let base_type_of_name = function
+    | "Int"    -> Some (Type.Base Base.Int)
+    | "Bool"   -> Some (Type.Base Base.Bool)
+    | "String" -> Some (Type.Base Base.String)
+    | "Atom"   -> Some (Type.Base Base.Atom)
+    | "Unit"   -> Some (Type.Tuple [])
+    | _        -> None
+
+(* Interpret a data field as a binder_source *)
+let interpret_data_field type_name params field pos =
+    let find_param_index v =
+        let rec go i = function
+            | [] -> None
+            | p :: _ when p = v -> Some i
+            | _ :: rest -> go (i + 1) rest
+        in go 0 params
+    in
+    match field with
+    | DVar v ->
+        begin match find_param_index v with
+        | Some i -> Recursive_types.Param i
+        | None ->
+            raise (parse_error
+                (Format.sprintf "Unknown type variable '%s' in data declaration" v)
+                [pos])
+        end
+    | DBase name when name = type_name && params = [] ->
+        (* Bare self-reference for a 0-parameter type, e.g., Expr in Add Expr Expr *)
+        Recursive_types.Self
+    | DBase name ->
+        begin match base_type_of_name name with
+        | Some ty -> Recursive_types.Fixed ty
+        | None ->
+            raise (parse_error
+                (Format.sprintf
+                    "Unknown type '%s' in data declaration field \
+                     (expected a base type like Int, Bool, String, or a self-reference)" name)
+                [pos])
+        end
+    | DApp (name, args) when name = type_name ->
+        (* Check that args match the type parameters exactly *)
+        let matches =
+            List.length args = List.length params &&
+            List.for_all2 (fun arg param ->
+                match arg with DVar v -> v = param | _ -> false
+            ) args params
+        in
+        if matches then Recursive_types.Self
+        else
+            raise (parse_error
+                (Format.sprintf
+                    "Recursive reference to '%s' must use the same type parameters" type_name)
+                [pos])
+    | DApp (name, _) ->
+        raise (parse_error
+            (Format.sprintf
+                "Unsupported field type '%s' in data declaration \
+                 (only base types, type parameters, and self-references are supported)" name)
+            [pos])
+
 
 %}
 (* Tokens *)
@@ -94,13 +161,11 @@ These will be added in later
 %token OR
 %token CASE
 %token CASEL
-%token LIST
-%token NIL
+%token <string> CTOR_KW
 %token CONS
 %token OF
-%token INL
-%token INR
 %token PIPE
+%token DATA
 
 (* Precedence *)
 %left AND OR
@@ -114,6 +179,49 @@ These will be added in later
 
 %%
 
+(* Any constructor name: covers both registered CTOR_KW and unregistered CONSTRUCTOR *)
+any_constructor:
+    | CONSTRUCTOR { $1 }
+    | CTOR_KW { $1 }
+
+(* Data declaration field: a type variable, a bare constructor (base type or 0-param self),
+   or a parenthesized type application for parameterized types.
+   A parenthesized constructor with no inner fields, e.g. (Nothing), is treated as DBase
+   (a 0-param self-reference or base type). *)
+data_field:
+    | VARIABLE { DVar $1 }
+    | CONSTRUCTOR { DBase $1 }
+    | LEFT_PAREN any_constructor RIGHT_PAREN { DBase $2 }
+    | LEFT_PAREN any_constructor data_field+ RIGHT_PAREN { DApp ($2, $3) }
+
+(* A single data constructor: name followed by zero or more fields *)
+data_ctor:
+    | any_constructor data_field* { ($1, $2) }
+
+(* Data type declaration with side-effecting registration *)
+data_decl:
+    | DATA CONSTRUCTOR VARIABLE* EQ separated_nonempty_list(PIPE, data_ctor) {
+        let type_name = $2 in
+        let params = $3 in
+        let param_count = List.length params in
+        let pos = Position.make ~start:$startpos ~finish:$endpos
+            ~code:!source_code_instance in
+        let constructors = List.map (fun (ctor_name, fields) ->
+            let binder_sources = List.map
+                (fun f -> interpret_data_field type_name params f pos)
+                fields
+            in
+            Recursive_types.{ ctor_name; binder_sources }
+        ) $5 in
+        let def = Recursive_types.{ type_name; param_count; constructors } in
+        Recursive_types.register def [pos]
+    }
+
+(* Constructor name: either a built-in CTOR_KW or a user-defined CONSTRUCTOR *)
+ctor_name:
+    | CTOR_KW { $1 }
+    | CONSTRUCTOR { $1 }
+
 message:
     | CONSTRUCTOR LEFT_PAREN separated_list(COMMA, expr) RIGHT_PAREN { ($1, $3) }
 
@@ -123,17 +231,10 @@ message_binder:
 type_annot:
     | COLON ty { $2 }
 
-inl_branch:
-    | INL LEFT_PAREN VARIABLE RIGHT_PAREN type_annot RIGHTARROW expr { (($3, $5), $7) }
-
-inr_branch:
-    | INR LEFT_PAREN VARIABLE RIGHT_PAREN type_annot RIGHTARROW expr { (($3, $5), $7) }
-
-nil_branch:
-    | NIL RIGHTARROW expr { $3 }
-
-cons_branch:
-    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { (($2, $4), $7) }
+branch:
+    | ctor_name LEFT_PAREN separated_list(COMMA, VARIABLE) RIGHT_PAREN RIGHTARROW expr { ($3, $6, $1) }
+    | ctor_name RIGHTARROW expr { ([], $3, $1) }
+    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, "Cons") }
 
 expr:
     (* Let *)
@@ -158,12 +259,12 @@ linearity:
     | LINFUN { true }
 
 basic_expr:
-    | INL LEFT_PAREN expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inl $3 )}
-    | INR LEFT_PAREN expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inr $3 )}
-    | CASE expr OF LEFT_BRACE inl_branch PIPE inr_branch RIGHT_BRACE
-        { with_pos_from_positions $startpos $endpos ( Case { term = $2; branch1 = $5; branch2 = $7} )}
-    | CASEL basic_expr type_annot OF LEFT_BRACE nil_branch PIPE cons_branch RIGHT_BRACE
-        { with_pos_from_positions $startpos $endpos ( CaseL { term = $2; ty = $3; nil = $6; cons = $8} )}
+    | ctor_name LEFT_PAREN separated_list(COMMA, expr) RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ($1, $3) )}
+    | ctor_name { with_pos_from_positions $startpos $endpos ( Inject ($1, []) )}
+    | CASE basic_expr type_annot OF LEFT_BRACE separated_list(PIPE, branch) RIGHT_BRACE
+        { with_pos_from_positions $startpos $endpos ( Case { term = $2; ty = $3; branches = $6 } )}
+    | CASEL basic_expr type_annot OF LEFT_BRACE branch PIPE branch RIGHT_BRACE
+        { with_pos_from_positions $startpos $endpos ( Case { term = $2; ty = $3; branches = [$6; $8] } )}
     (* New *)
     | NEW LEFT_BRACK interface_name RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( New $3 )}
     (* Spawn *)
@@ -173,8 +274,7 @@ basic_expr:
     (* Sugared Fail forms *)
     | FAIL LEFT_PAREN expr RIGHT_PAREN LEFT_BRACK ty RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( SugarFail ($3, $6))}
     | tuple_exprs { with_pos_from_positions $startpos $endpos ( Tuple $1 ) }
-    | NIL { with_pos_from_positions $startpos $endpos ( Nil ) }
-    | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Cons ($2, $4) ) }
+    | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ("Cons", [$2; $4]) ) }
     (* App *)
     | fact LEFT_PAREN expr_list RIGHT_PAREN
         { with_pos_from_positions $startpos $endpos (
@@ -269,7 +369,22 @@ ty:
     | parenthesised_datatypes LOLLI simple_ty       { Type.Fun { linear = true;  args = $1; result = $3} }
     | LEFT_PAREN simple_ty PLUS simple_ty RIGHT_PAREN { Type.make_sum_type $2 $4 }
     | tuple_annotation { Type.make_tuple_type $1 }
-    | LIST LEFT_PAREN simple_ty RIGHT_PAREN { Type.make_list_type $3 }
+    | CONSTRUCTOR LEFT_PAREN separated_list(COMMA, ty) RIGHT_PAREN {
+        let name = $1 in
+        let args = $3 in
+        match Recursive_types.find_type name with
+        | Some def when List.length args = def.param_count ->
+            Type.Rec (name, args)
+        | Some def ->
+            raise (parse_error
+                (Format.sprintf "%s expects %d type argument(s), got %d"
+                    name def.param_count (List.length args))
+                [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+        | None ->
+            raise (parse_error
+                (Format.sprintf "Unknown type constructor: %s" name)
+                [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+    }
     | simple_ty { $1 }
 
 interface_name:
@@ -334,14 +449,26 @@ simple_ty:
 
 base_ty:
     | CONSTRUCTOR {
+        let pos = Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance in
         match $1 with
-            | "Atom" -> Type.Base Base.Atom
-            | "Unit" -> Type.Tuple []
-            | "Int" -> Type.Base Base.Int
-            | "Bool" -> Type.Base Base.Bool
+            | "Atom"   -> Type.Base Base.Atom
+            | "Unit"   -> Type.Tuple []
+            | "Int"    -> Type.Base Base.Int
+            | "Bool"   -> Type.Base Base.Bool
             | "String" -> Type.Base Base.String
-            | _ -> raise (parse_error "Expected Atom, Int, Bool, or String"
-                            [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
+            | name ->
+                (* Check if it's a 0-param user-defined recursive type *)
+                match Recursive_types.find_type name with
+                | Some def when def.param_count = 0 -> Type.Rec (name, [])
+                | Some def ->
+                    raise (parse_error
+                        (Format.sprintf "%s expects %d type argument(s), got 0"
+                            name def.param_count)
+                        [pos])
+                | None ->
+                    raise (parse_error
+                        (Format.sprintf "Unknown type '%s': expected Int, Bool, String, Atom, Unit, or a defined type" name)
+                        [pos])
     }
 
 message_ty:
@@ -376,4 +503,4 @@ expr_main:
     | expr EOF { $1 }
 
 program:
-    | interface* decl* expr? EOF { ({ prog_interfaces = $1; prog_decls = $2; prog_body = $3 }, !source_code_instance) }
+    | data_decl* interface* decl* expr? EOF { ({ prog_interfaces = $2; prog_decls = $3; prog_body = $4 }, !source_code_instance) }

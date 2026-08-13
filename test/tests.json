@@ -118,6 +118,66 @@
                     "name": "Lists (with mailboxes)",
                     "filename": "pat-tests/list-mb.pat",
                     "exit_code": 0
+                },
+                {
+                    "name": "Lists (broken pattern)",
+                    "filename": "pat-tests/list-broken.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "List traversal",
+                    "filename": "pat-tests/traversal.pat",
+                    "exit_code": 0
+                }
+            ]
+        },
+        { "group": "User-defined data types",
+          "tests":
+            [
+                {
+                    "name": "Maybe type",
+                    "filename": "pat-tests/data-1.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "NonEmpty list",
+                    "filename": "pat-tests/data-2.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Multiple data types",
+                    "filename": "pat-tests/data-3.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Either type with mailboxes",
+                    "filename": "pat-tests/data-4.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Expression language (base type fields)",
+                    "filename": "pat-tests/data-expr.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Mixed field types (base types and type parameters)",
+                    "filename": "pat-tests/data-mixed.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Conflict: redefining built-in type name",
+                    "filename": "pat-tests/data-conflict-1.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Conflict: redefining built-in constructor name",
+                    "filename": "pat-tests/data-conflict-2.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Conflict: duplicate constructor name across user-defined types",
+                    "filename": "pat-tests/data-conflict-3.pat",
+                    "exit_code": 1
                 }
             ]
         },
@@ -143,6 +203,7 @@
                 {"name": "Count", "filename": "examples/savina/count.pat", "exit_code": 0},
                 {"name": "Fibonacci", "filename": "examples/savina/fib.pat", "exit_code": 0},
                 {"name": "Fibonacci with Pairs", "filename": "examples/savina/fib_pairs.pat", "exit_code": 0},
+                {"name": "Fibonacci (explicit task tree)", "filename": "examples/savina/fib_tree.pat", "exit_code": 0},
                 {"name": "kfork", "filename": "examples/savina/kfork.pat", "exit_code": 0},
                 {"name": "Log Map", "filename": "examples/savina/log_map.pat", "exit_code": 0},
                 {"name": "Philosopher", "filename": "examples/savina/philosopher.pat", "exit_code": 0},
@@ -175,45 +236,20 @@
                 {"name": "Aliasing through communication (1)", "filename": "errors/alias_comm1.pat", "exit_code": 1},
                 {"name": "Aliasing through communication (2)", "filename": "errors/alias_comm2.pat", "exit_code": 1},
                 {"name": "Aliasing through communication (3)", "filename": "errors/simple_alias_comm.pat", "exit_code": 1},
-                {
-                    "name": "Lock",
-                    "filename": "errors/lock.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Future",
-                    "filename": "errors/future.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Use after free",
-                    "filename": "errors/useafterfree.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Use after free (2)",
-                    "filename": "errors/uaf1.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Use after free (3)",
-                    "filename": "errors/uaf2.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Use after free (4)",
-                    "filename": "errors/uaf3.pat",
-                    "exit_code": 1
-                },
-                {
-                    "name": "Use after free (lists)",
-                    "filename": "errors/uaf_lists.pat",
-                    "exit_code": 1
-                },
+                {"name": "Lock", "filename": "errors/lock.pat", "exit_code": 1},
+                {"name": "Future", "filename": "errors/future.pat", "exit_code": 1},
+                {"name": "Use after free", "filename": "errors/useafterfree.pat", "exit_code": 1},
+                {"name": "Use after free (2)", "filename": "errors/uaf1.pat", "exit_code": 1},
+                {"name": "Use after free (3)", "filename": "errors/uaf2.pat", "exit_code": 1},
+                {"name": "Use after free (4)", "filename": "errors/uaf3.pat", "exit_code": 1},
+                {"name": "Use after free (lists)", "filename": "errors/uaf_lists.pat", "exit_code": 1},
                 {"name": "Insufficient type information", "filename": "errors/pat_constr.pat", "exit_code": 1},
                 {"name": "Non-exhaustive guards", "filename": "errors/pat_constr2.pat", "exit_code": 1},
                 {"name": "Additional non-supported non-fail guard with nontrivial continuation", "filename": "errors/pat_constr3.pat", "exit_code": 1},
-                {"name": "Additional non-supported free guard", "filename": "errors/pat_constr4.pat", "exit_code": 1}
+                {"name": "Additional non-supported free guard", "filename": "errors/pat_constr4.pat", "exit_code": 1},
+                {"name": "Unbound variable", "filename": "errors/unbound.pat", "exit_code": 1},
+                {"name": "Reserved type name used as data type", "filename": "errors/data-reserved-names.pat", "exit_code": 1},
+                {"name": "Non-exhaustive case statement", "filename": "errors/case-nonexhaustive.pat", "exit_code": 1}
             ]
         }
     ]

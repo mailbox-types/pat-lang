@@ -43,7 +43,7 @@ def room(self: RoomMb?, capacity: Int, waiters: List(CustomerMb!), waiting: Int,
                 room(self, capacity, (customerMb :: waiters), (waiting + 1), barber)
             }
         receive Next() from self ->
-            caseL waiters : List(CustomerMb!) of {
+            case waiters : List(CustomerMb!) of {
                 nil ->
                     sleep(5);
                     room(self, capacity, (nil : List(CustomerMb!)), waiting, barber)
@@ -99,7 +99,7 @@ def spawnCustomers(self: SelectorMb?, generator: Int, soFar: Int, acc : List(Cus
 }
 
 def startCustomers(customerMbs : List(CustomerMb!), room : RoomMb!) : Unit {
-    caseL customerMbs : List(CustomerMb!) of {
+    case customerMbs : List(CustomerMb!) of {
         nil -> ()
         | (a :: as) ->
             a ! Start(room);
@@ -108,7 +108,7 @@ def startCustomers(customerMbs : List(CustomerMb!), room : RoomMb!) : Unit {
 }
 
 def doneCustomers(customerMbs : List(CustomerMb!)) : Unit {
-    caseL customerMbs : List(CustomerMb!) of {
+    case customerMbs : List(CustomerMb!) of {
         nil -> ()
         | (a :: as) ->
             a ! Done();

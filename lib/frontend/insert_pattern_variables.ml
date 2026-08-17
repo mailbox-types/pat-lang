@@ -25,10 +25,8 @@ let rec annotate_type =
             }
         | Tuple ts ->
             Tuple (List.map annotate_type_as_returnable ts)
-        | Sum (t1, t2) ->
-            Sum (annotate_type_as_returnable t1, annotate_type_as_returnable t2)
-        | List t ->
-            List (annotate_type_as_returnable t)
+        | Rec (s, ts) ->
+            Rec (s, List.map annotate_type_as_returnable ts)
         | UserMailbox { 
             umb_capability;
             umb_interface;
@@ -74,9 +72,9 @@ and annotate_type_as_returnable =
                 pattern;
                 quasilinearity
             }
-        | List t -> List (annotate_type_as_returnable t)
         | Tuple ts -> Tuple (List.map annotate_type_as_returnable ts)
-        | Sum (t1, t2) -> Sum (annotate_type_as_returnable t1, annotate_type_as_returnable t2)
+        | Rec (s, ts) ->
+            Rec (s, List.map annotate_type_as_returnable ts)
         | t -> annotate_type t
 
 let annotate_interface_type pos ty =
@@ -153,29 +151,12 @@ let visitor =
                 let cont = self#visit_expr env cont in
                 let new_let = LetTuple { annot = Some tys; binders; term; cont } in
                 { expr_with_pos with node = new_let }
-            | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
+            | Case { term; ty; branches } ->
                 let term = self#visit_expr env term in
-                let ty1 = annotate_type_as_returnable ty1 in
-                let ty2 = annotate_type_as_returnable ty2 in
-                let e1 = self#visit_expr env e1 in
-                let e2 = self#visit_expr env e2 in
-                let new_case = Case {
-                    term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) }
-                in
-                { expr_with_pos with node = new_case }
-            | CaseL { term; ty = ty1; nil = nil_cont; cons = ((x_bnd, xs_bnd), cons_cont)} ->
-                let term = self#visit_expr env term in
-                let ty_ann = annotate_type_as_returnable ty1 in
-                let nil_cont = self#visit_expr env nil_cont in
-                let cons_cont = self#visit_expr env cons_cont in
-                let new_case =
-                    CaseL {
-                        term;
-                        ty = ty_ann;
-                        nil = nil_cont;
-                        cons = ((x_bnd, xs_bnd), cons_cont)
-                    }
-                in
+                let ty_ann = annotate_type ty in
+                let branches = List.map (fun (bnds, e, s) ->
+                    (bnds, self#visit_expr env e, s)) branches in
+                let new_case = Case { term; ty = ty_ann; branches } in
                 { expr_with_pos with node = new_case }
             | _ -> super#visit_expr env expr_with_pos
 

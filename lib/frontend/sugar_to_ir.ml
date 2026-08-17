@@ -162,10 +162,10 @@ and transform_expr :
                 let fvs =  get_fvs body' in
                 with_fvs fvs (Ir.Annotate (body', annotation))
                 |> k env
-        | Inl e ->
-            transform_subterm decls env e (fun env v -> with_val_fvs v (Ir.Return (with_val_fvs v (Ir.Inl v))) |> k env)
-        | Inr e ->
-            transform_subterm decls env e (fun env v -> with_val_fvs v (Ir.Return (with_val_fvs v (Ir.Inr v))) |> k env)
+        | Inject (name, es) ->
+            transform_exprs decls env es (fun _ vs ->
+                let fvs = VarSet.union_many (List.map WithIrMetadata.fvs vs) in
+                with_fvs fvs (Ir.Return (with_fvs fvs (Ir.Inject (name, vs)))) |> k env)
         (* Note that annotation will have been desugared to subject annotation *)
         | Let {binder; term; body; _} ->
             (* let x = M in N*)
@@ -194,12 +194,6 @@ and transform_expr :
             transform_exprs decls env es (fun _ vs ->
                 let fvs = VarSet.union_many (List.map (get_fvs) vs) in
                 with_fvs fvs (Ir.Return (with_fvs fvs (Ir.Tuple vs))) |> k env)
-        | Nil -> no_fvs (Ir.Return (no_fvs (Ir.Nil))) |> k env
-        | Cons (e1, e2) ->
-            transform_subterm decls env e1 (fun _ v1 ->
-            transform_subterm decls env e2 (fun _ v2 ->
-                let fvs = VarSet.union_many (List.map (get_fvs) [v1; v2]) in
-                with_fvs fvs (Ir.Return (with_fvs fvs (Ir.Cons (v1, v2)))) |> k env))
         | LetTuple {binders = bs; term; cont; _ } ->
             (* let x = M in N*)
             (* Create IR variables based on the binders *)
@@ -223,8 +217,8 @@ and transform_expr :
                         binders;
                         tuple = v;
                         cont = cont' }))
+(* OLD:
         | Case {
-            term;
             branch1 = ((bnd1, ty1), comp1);
             branch2 = ((bnd2, ty2), comp2) } ->
             transform_subterm decls env term (fun env v ->
@@ -246,30 +240,31 @@ and transform_expr :
                     branch1 = (ir_bnd1, ty1), comp1';
                     branch2 = (ir_bnd2, ty2), comp2';
                 }) |> k env)
-        | CaseL {
+*)
+
+        | Case {
             term;
-            ty = ty1;
-            nil = comp1;
-            cons = ((bnd1, bnd2), comp2) } ->
+            ty;
+            branches } ->
             transform_subterm decls env term (fun env v ->
-                let (ir_bnd1, env1) = add_name env bnd1 in
-                let (ir_bnd2, env2) = add_name env1 bnd2 in
-                let comp1' = transform_expr decls env1 comp1 id in
-                let comp2' = transform_expr decls env2 comp2 id in
+                let ir_branches = List.map (fun (bnds, comp, s) ->
+                    let (ir_bnds, branch_env) = add_names env (fun x -> x) bnds in
+                    (ir_bnds, (transform_expr decls branch_env comp id), s)) branches in
                 let fvs =
-                    VarSet.union_many [
-                        get_fvs v;
-                        get_fvs comp1';
-                        (VarSet.remove_many (get_fvs comp2')
-                            [Var.of_binder ir_bnd1; Var.of_binder ir_bnd2])
-                    ]
+                    (* Union of FVs in branches *)
+                    ir_branches
+                    |> List.map (fun (bnds, comp, _) ->
+                        let bnd_vars = List.map (Var.of_binder) bnds in
+                        VarSet.diff (WithIrMetadata.fvs comp) (VarSet.of_list bnd_vars))
+                    |> VarSet.union_many
+                    (* Union with FVs in scrutinee *)
+                    |> VarSet.union (WithIrMetadata.fvs v)
                 in
                 with_fvs fvs (
-                Ir.CaseL {
+                Ir.Case {
                     term = v;
-                    ty = ty1;
-                    nil = comp1';
-                    cons = (ir_bnd1, ir_bnd2), comp2';
+                    ty = ty;
+                    branches = ir_branches;
                 }) |> k env)
         | Seq (e1, e2) ->
             transform_expr decls env e1 (fun env c1 ->
@@ -343,6 +338,13 @@ and transform_syntactic_value
     let with_fvs fvs node = with_fvs ~pos fvs node in
     let with_val_fvs value node = with_val_fvs ~pos value node in
     let no_fvs node = no_fvs ~pos node in
+    let transform_many f xs =
+        List.map (transform_syntactic_value decls env) xs
+                |> sequence_options
+                |> Option.map (fun vs ->
+                    let fvs = value_list_fvs vs in
+                    f fvs vs)
+    in
     match WithPos.node x with
         | Var var ->
              let v = lookup_var var env in
@@ -351,7 +353,6 @@ and transform_syntactic_value
         | Atom x -> Some (no_fvs @@ Ir.Atom x)
         | Primitive x -> Some (no_fvs @@ Ir.Primitive x)
         | Constant x -> Some (no_fvs @@ Ir.Constant x)
-        | Nil -> Some (no_fvs @@ Ir.Nil)
         | Lam {linear; parameters; result_type; body} ->
             let (bnds, env') = add_names env fst parameters in
             let body' = transform_expr decls env' body id in
@@ -368,25 +369,14 @@ and transform_syntactic_value
             Option.map
                 (fun v -> with_val_fvs v @@ Ir.VAnnotate (v, ty))
                 (transform_syntactic_value decls env e)
-        | Cons (x, xs) ->
-            Option.bind (transform_syntactic_value decls env x) (fun v ->
-            Option.bind (transform_syntactic_value decls env xs) (fun vs ->
-            let fvs =  value_list_fvs [v; vs] in
-            Some (with_fvs fvs (Ir.Cons (v, vs)))))
+        | Inject (s, xs) ->
+            transform_many (fun fvs vs ->
+                with_fvs fvs <| Ir.Inject (s, vs)
+            ) xs
         | Tuple xs ->
-             List.map (transform_syntactic_value decls env) xs (* list(option(value)) *)
-                |> sequence_options (* option(list(value))*)
-                |> Option.map (fun vs ->
-                    let fvs = value_list_fvs vs in
-                    (with_fvs fvs @@ Ir.Tuple vs))
-        | Inl x ->
-            Option.map
-                (fun v -> with_val_fvs v @@ Ir.Inl v)
-                (transform_syntactic_value decls env x)
-        | Inr x ->
-            Option.map
-                (fun v -> with_val_fvs v @@ Ir.Inr v)
-                (transform_syntactic_value decls env x)
+            transform_many (fun fvs vs ->
+                with_fvs fvs <| Ir.Tuple vs
+            ) xs
         | _ -> None
 (* Transforms a subterm into an IR computation, naming if necessary. *)
 and transform_subterm

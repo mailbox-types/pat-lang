@@ -39,22 +39,12 @@ and expr_node =
         term: expr;
         cont: expr
     }
-    (* Lists *)
-    | Nil
-    | Cons of (expr * expr)
-    | CaseL of {
-        term: expr;
-        ty: (Type.t[@name "ty"]);
-        nil: expr;
-        cons: (sugar_binder * sugar_binder) * expr
-    }
-    (* Sums *)
-    | Inl of expr
-    | Inr of expr
+    (* Value constructor for recursive types (e.g., inl, inr, nil, cons, leaf, node) *)
+    | Inject of string * expr list
     | Case of {
         term: expr;
-        branch1: (sugar_binder * (Type.t[@name "ty"])) * expr;
-        branch2: (sugar_binder * (Type.t[@name "ty"])) * expr
+        ty: (Type.t[@name "ty"]);
+        branches: (sugar_binder list * expr * string) list
     }
     (* Note that we're using the versions of new and spawn where they are
        not wired to their continuations. I've experimented with the
@@ -173,6 +163,11 @@ and pp_bnd_ann ppf (bnd, ann) =
         bnd
         pp_let_annot ann
 (* Expressions *)
+and pp_sugar_branch ppf (bnds, e, name) =
+    fprintf ppf "%s(%a) -> %a"
+        name
+        (pp_print_comma_list pp_print_string) bnds
+        pp_expr e
 and pp_expr ppf expr_with_pos =
     (* Might want, at some stage, to print out pretype info *)
     let expr_node = WithPos.node expr_with_pos in
@@ -223,17 +218,13 @@ and pp_expr ppf expr_with_pos =
                         pp_expr target
                         pp_message message
         end
-    | Inl e -> fprintf ppf "inl %a" pp_expr e
-    | Inr e -> fprintf ppf "inr %a" pp_expr e
-    | Case { term; branch1 = (bnd1, e1); branch2 = (bnd2, e2) } ->
-        fprintf
-            ppf
-            "case %a of {@[@[inl %a -> [@%a@]@][@inr %a -> [@%a@]@]@]}"
+    | Inject (name, es) ->
+        fprintf ppf "%s(%a)" name (pp_print_comma_list pp_expr) es
+    | Case { term; ty; branches } ->
+        fprintf ppf "case %a : %a of { %a }"
             pp_expr term
-            pp_bnd_ann bnd1
-            pp_expr e1
-            pp_bnd_ann bnd2
-            pp_expr e2
+            Type.pp ty
+            (pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf " | ") pp_sugar_branch) branches
     | Tuple es ->
         fprintf ppf "(%a)" (pp_print_comma_list pp_expr) es
     | LetTuple { binders = bs; annot = None; term; cont } ->
@@ -248,23 +239,6 @@ and pp_expr ppf expr_with_pos =
             (pp_print_comma_list Type.pp) ts
             pp_expr term
             pp_expr cont
-    | Nil -> pp_print_string ppf "nil"
-    | Cons (e1, e2) ->
-        fprintf ppf "cons %a %a" pp_expr e1 pp_expr e2
-    | CaseL { term; ty = t1; nil = e1; cons = ((b1, b2), e2) } -> begin
-      match t1 with
-        | List t ->
-	          fprintf
-            ppf
-            "caseL %a : %a of {@[@[nil -> @[%a@]@]@]@[cons %a %a -> @[%a@]@]@]}"
-            pp_expr term
-            Type.pp t1
-            pp_expr e1
-            pp_bnd_ann (b1, t)
-            pp_bnd_ann (b2, t1)
-            pp_expr e2
-        | _ -> fprintf ppf "bad list"
-      end
     | Guard { target; pattern; guards; _ } ->
         fprintf ppf
             "guard %a : %a {@,@[<v 2>  %a@]@,}"
@@ -321,16 +295,13 @@ let substitute_solution sol =
     in
     visitor#visit_program ()
 
-
 let rec is_syntactic_value x =
     match WithPos.node x with
         | Var _
         | Atom _
         | Primitive _
         | Constant _
-        | Nil
         | Lam _ -> true
-        | Cons (x, xs) -> is_syntactic_value x && is_syntactic_value xs
-        | Tuple xs -> List.for_all is_syntactic_value xs
-        | Inl x | Inr x -> is_syntactic_value x
+        | Tuple xs
+        | Inject (_, xs) -> List.for_all is_syntactic_value xs
         | _ -> false

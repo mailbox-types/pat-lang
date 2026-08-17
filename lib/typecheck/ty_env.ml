@@ -108,13 +108,6 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                               pattern = pat;
                               quasilinearity = ql
                           }, constrs
-                | List ty1, List ty2 ->
-                    let ty, constrs = join_types var ty1 ty2 in
-                    List ty, constrs
-                | Sum (t1l, t1r), Sum (t2l, t2r) ->
-                    let tl, constrs1 = join_types var t1l t2l in
-                    let tr, constrs2 = join_types var t1r t2r in
-                    Sum (tl, tr), Constraint_set.union constrs1 constrs2
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 ->
@@ -122,7 +115,15 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
-                    Tuple ts, constrs
+                    Tuple (List.rev ts), constrs
+                | Rec (s1, ts1), Rec (s2, ts2) when s1 = s2 ->
+                    let (ts, constrs) =
+                        List.fold_left2 (fun (acc, constrs) t1 t2 ->
+                            let t, t_constrs = join_types var t1 t2 in
+                            t :: acc, Constraint_set.union t_constrs constrs)
+                        ([], Constraint_set.empty) ts1 ts2
+                    in
+                    Rec (s1, List.rev ts), constrs
                 | _, _ ->
                     Gripers.type_mismatch true t1 t2 var [pos]
         in
@@ -251,13 +252,6 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                               (* Must take strongest QL across all branches. *)
                               quasilinearity = Quasilinearity.max ql1 ql2
                           }, constrs
-                | List t1, List t2 ->
-                    let ty, constrs = intersect_types var t1 t2 in
-                    List ty, constrs
-                | Sum (t1l, t1r), Sum (t2l, t2r) ->
-                    let tl, constrs1 = intersect_types var t1l t2l in
-                    let tr, constrs2 = intersect_types var t1r t2r in
-                    Sum (tl, tr), Constraint_set.union constrs1 constrs2
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 -> 
@@ -265,7 +259,16 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
-                    Tuple ts, constrs
+                    Tuple (List.rev ts), constrs
+                | Rec (s1, ts1), Rec (s2, ts2) ->
+                    if s1 <> s2 then Gripers.type_mismatch false t1 t2 var [pos]
+                    else let (ts, constrs) =
+                        List.fold_left2 (fun (acc, constrs) t1 t2 ->
+                            let t, t_constrs = intersect_types var t1 t2 in
+                            t :: acc, Constraint_set.union t_constrs constrs)
+                        ([], Constraint_set.empty) ts1 ts2
+                    in
+                    Rec (s1, List.rev ts), constrs
                 | _, _ ->
                     Gripers.type_mismatch false t1 t2 var [pos]
         in
@@ -299,7 +302,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                 | Mailbox { capability = Out; interface; quasilinearity; pattern = pat } ->
                           let pat = Pattern.Plus (pat, Pattern.One) in
                           Mailbox { capability = Out; interface; quasilinearity; pattern = pat }
-                | List ty -> List (relax_send_type ty)
+                | Rec (s, ts) -> Rec (s, List.map relax_send_type ts)
                 | _ ->
                   raise (Errors.internal_error "ty_env.ml" "error in disjoint MB combination")
               in
@@ -366,15 +369,16 @@ let check_free_mailbox_variables ?strategy bound_variable_types env =
         let open Type in
         function
         | Base _ | Fun _ -> []
-        | Tuple ts -> List.concat_map get_interfaces ts
-        | Sum (t1, t2) -> List.concat_map get_interfaces [t1; t2]
-        | List t -> get_interfaces t
+        | Tuple ts
+        | Rec (_, ts) -> List.concat_map get_interfaces ts
         | Mailbox { interface; _ } -> [interface]
         | UserMailbox _ -> assert false
     in
     (*
         List.filter_map (fun ty ->
-
+let check_free_mailbox_variables bound_variable_types env =
+    let mb_iface_tys =
+        List.filter_map (fun ty ->
             if Type.is_mailbox_type ty then
                 Some (Type.get_interface ty)
             else None)
@@ -387,7 +391,9 @@ let check_free_mailbox_variables ?strategy bound_variable_types env =
         | Some s -> s
         | None -> get receive_typing_strategy
     in
-    match strat with
+    let open Settings in
+    let open ReceiveTypingStrategy in
+    match get receive_typing_strategy with
         | Strict ->
             iter (fun v ty ->
                 if Type.is_lin ty then
@@ -397,7 +403,6 @@ let check_free_mailbox_variables ?strategy bound_variable_types env =
             (* Now we need to get the intersection of the interfaces in bound
                variables and interfaces in environment
             *)
-
             (* All interfaces found in the variables being bound by the receive *)
             let bv_interfaces =
                 List.concat_map get_interfaces bound_variable_types

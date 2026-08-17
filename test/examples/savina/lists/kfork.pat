@@ -62,8 +62,13 @@ def floodActors(numMessages: Int, actorMbs: List(ActorMb!)): Unit {
 ## Launcher.
 def main(numActors: Int): Unit {
 
+<<<<<<< HEAD
   let actorMbs = spawnActors(numActors, nil) in
   floodActors(1000, actorMbs)
+=======
+  let actorMbs = spawnActors(numActors, (nil : List(ActorMb!))) in
+    floodActors(1000, actorMbs)
+>>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
 }
 
 main(3)

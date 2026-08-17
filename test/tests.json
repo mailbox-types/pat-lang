@@ -716,6 +716,91 @@
                     "name": "tuple-ret-bad",
                     "filename": "pat-tests/tuple-ret-bad.pat",
                     "exit_code": 1
+                },
+                {
+                    "name": "Lists (1)",
+                    "filename": "pat-tests/list-1.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Lists (2)",
+                    "filename": "pat-tests/list-2.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Lists (with mailboxes)",
+                    "filename": "pat-tests/list-mb.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Lists (broken pattern)",
+                    "filename": "pat-tests/list-broken.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "List traversal",
+                    "filename": "pat-tests/traversal.pat",
+                    "exit_code": 0
+                }
+            ]
+        },
+        { "group": "User-defined data types",
+          "tests":
+            [
+                {
+                    "name": "Maybe type",
+                    "filename": "pat-tests/data-1.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "NonEmpty list",
+                    "filename": "pat-tests/data-2.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Multiple data types",
+                    "filename": "pat-tests/data-3.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Either type with mailboxes",
+                    "filename": "pat-tests/data-4.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Expression language (base type fields)",
+                    "filename": "pat-tests/data-expr.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Mixed field types (base types and type parameters)",
+                    "filename": "pat-tests/data-mixed.pat",
+                    "exit_code": 0
+                },
+                {
+                    "name": "Conflict: redefining built-in type name",
+                    "filename": "pat-tests/data-conflict-1.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Conflict: redefining built-in constructor name",
+                    "filename": "pat-tests/data-conflict-2.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Conflict: duplicate constructor name across user-defined types",
+                    "filename": "pat-tests/data-conflict-3.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Reserved type name used as data type",
+                    "filename": "errors/data-reserved-names.pat",
+                    "exit_code": 1
+                },
+                {
+                    "name": "Non-exhaustive case statement",
+                    "filename": "errors/case-nonexhaustive.pat",
+                    "exit_code": 1
                 }
             ]
         },

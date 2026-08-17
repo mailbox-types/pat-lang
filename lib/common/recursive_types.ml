@@ -2,6 +2,8 @@
    User-defined types (from `data` decls)
    added at parse time via [register]. *)
 
+(* SJF TODO: Can we break the dependency between this and Type.ml -- perhaps by making Fixed refer to a CommonTypes.Base only? *)
+
 type binder_source =
     | Param of int    (* the i-th type parameter *)
     | Self            (* the recursive type itself *)
@@ -18,14 +20,17 @@ type rec_type_def = {
     constructors: constructor_def list;
 }
 
+let list_type_name = "List"
+let sum_type_name = "Sum"
+
 (* Built-in recursive types *)
 let builtin_rec_types = [
-    { type_name = "Sum"; param_count = 2;
+    { type_name = sum_type_name; param_count = 2;
       constructors = [
           { ctor_name = "Inl"; binder_sources = [Param 0] };
           { ctor_name = "Inr"; binder_sources = [Param 1] };
       ] };
-    { type_name = "List"; param_count = 1;
+    { type_name = list_type_name; param_count = 1;
       constructors = [
           { ctor_name = "Nil"; binder_sources = [] };
           { ctor_name = "Cons"; binder_sources = [Param 0; Self] };
@@ -43,6 +48,7 @@ let rebuild_keyword_table () =
     Hashtbl.clear keyword_table;
     List.iter (fun def ->
         List.iter (fun c ->
+            (* SJF TODO: Would be good to get rid of this and have all constructors uppercase *)
             let lc = String.lowercase_ascii c.ctor_name in
             Hashtbl.replace keyword_table lc c.ctor_name;
             (* Also register original case if different *)

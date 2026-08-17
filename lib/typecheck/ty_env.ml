@@ -374,26 +374,13 @@ let check_free_mailbox_variables ?strategy bound_variable_types env =
         | Mailbox { interface; _ } -> [interface]
         | UserMailbox _ -> assert false
     in
-    (*
-        List.filter_map (fun ty ->
-let check_free_mailbox_variables bound_variable_types env =
-    let mb_iface_tys =
-        List.filter_map (fun ty ->
-            if Type.is_mailbox_type ty then
-                Some (Type.get_interface ty)
-            else None)
-        bound_variable_types
-    in
-    *)
     let open Settings in
     let open ReceiveTypingStrategy in
     let strat = match strategy with
         | Some s -> s
         | None -> get receive_typing_strategy
     in
-    let open Settings in
-    let open ReceiveTypingStrategy in
-    match get receive_typing_strategy with
+    match strat with
         | Strict ->
             iter (fun v ty ->
                 if Type.is_lin ty then

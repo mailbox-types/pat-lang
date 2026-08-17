@@ -750,57 +750,90 @@
                 {
                     "name": "Maybe type",
                     "filename": "pat-tests/data-1.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "NonEmpty list",
                     "filename": "pat-tests/data-2.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Multiple data types",
                     "filename": "pat-tests/data-3.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Either type with mailboxes",
                     "filename": "pat-tests/data-4.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Expression language (base type fields)",
                     "filename": "pat-tests/data-expr.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Mixed field types (base types and type parameters)",
                     "filename": "pat-tests/data-mixed.pat",
-                    "exit_code": 0
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Conflict: redefining built-in type name",
                     "filename": "pat-tests/data-conflict-1.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Conflict: redefining built-in constructor name",
                     "filename": "pat-tests/data-conflict-2.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Conflict: duplicate constructor name across user-defined types",
                     "filename": "pat-tests/data-conflict-3.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Reserved type name used as data type",
                     "filename": "errors/data-reserved-names.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 },
                 {
                     "name": "Non-exhaustive case statement",
                     "filename": "errors/case-nonexhaustive.pat",
-                    "exit_code": 1
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 }
             ]
         },

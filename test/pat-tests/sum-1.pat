@@ -1,8 +1,8 @@
 def main(): Unit {
-    let x = (inl(5) : (Int + Bool)) in
-    case x : (Int + Bool) of {
-          inl(x) -> print(intToString(x))
-        | inr(y) -> print("right branch")
+    let x = (Inl(5) : Sum(Int, Bool)) in
+    case x : Sum(Int, Bool) of {
+          Inl(x) -> print(intToString(x))
+        | Inr(y) -> print("right branch")
     }
 }
 

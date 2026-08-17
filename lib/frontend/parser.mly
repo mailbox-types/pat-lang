@@ -162,12 +162,7 @@ These will be added in later
 %token OR
 %token CASE
 %token CASEL
-<<<<<<< HEAD
-%token LIST
-%token NIL
-=======
 %token <string> CTOR_KW
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
 %token CONS
 %token OF
 %token PIPE
@@ -242,12 +237,6 @@ branch:
     | ctor_name RIGHTARROW expr { ([], $3, $1) }
     | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, "Cons") }
 
-nil_branch:
-    | NIL RIGHTARROW expr { $3 }
-
-cons_branch:
-    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { (($2, $4), $7) }
-
 expr:
     (* Let *)
     | LET VARIABLE type_annot? EQ expr IN expr
@@ -287,12 +276,7 @@ basic_expr:
     (* Sugared Fail forms *)
     | FAIL LEFT_PAREN expr RIGHT_PAREN LEFT_BRACK ty RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( SugarFail ($3, $6))}
     | tuple_exprs { with_pos_from_positions $startpos $endpos ( Tuple $1 ) }
-<<<<<<< HEAD
-    | NIL { with_pos_from_positions $startpos $endpos ( Nil ) }
-    | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Cons ($2, $4) ) }
-=======
     | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ("Cons", [$2; $4]) ) }
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
     (* App *)
     | fact LEFT_PAREN expr_list RIGHT_PAREN
         { with_pos_from_positions $startpos $endpos (
@@ -393,9 +377,6 @@ ty:
     | parenthesised_datatypes LOLLI simple_ty       { Type.Fun { linear = true;  args = $1; result = $3} }
     | LEFT_PAREN simple_ty PLUS simple_ty RIGHT_PAREN { Type.make_sum_type $2 $4 }
     | tuple_annotation { Type.make_tuple_type $1 }
-<<<<<<< HEAD
-    | LIST LEFT_PAREN simple_ty RIGHT_PAREN { Type.make_list_type $3 }
-=======
     | CONSTRUCTOR LEFT_PAREN separated_list(COMMA, ty) RIGHT_PAREN {
         let name = $1 in
         let args = $3 in
@@ -412,7 +393,6 @@ ty:
                 (Format.sprintf "Unknown type constructor: %s" name)
                 [Position.make ~start:$startpos ~finish:$endpos ~code:!source_code_instance])
     }
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
     | simple_ty { $1 }
 
 interface_name:

@@ -428,6 +428,9 @@ let rec step_current runtime state =
         runtime_error "Tuple arity mismatch in let-tuple";
       let env' = bind_many tuple_binders tuple_values state.env in
       finish_current { state with current_comp = cont; env = env' }
+    | Case _ ->
+      runtime_error "Evaluating case-expressions not yet implemented"
+      (*
     | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
       begin
         match get_node (force_value state.env term) with
@@ -441,22 +444,7 @@ let rec step_current runtime state =
         runtime_error
           (Format.asprintf "Expected sum value for case analysis, got: %a" pp_value (force_value state.env term))
       end
-    | CaseL { term; ty = _; nil; cons = ((binder1, binder2), comp) } ->
-      begin
-        match get_node (force_value state.env term) with
-        | Nil ->
-          finish_current { state with current_comp = nil }
-        | Cons (head, tail) ->
-          let env' =
-            state.env
-            |> VarMap.add (Var.of_binder binder1) (runtime_of_ir state.env head)
-            |> VarMap.add (Var.of_binder binder2) (runtime_of_ir state.env tail)
-          in
-          finish_current { state with current_comp = comp; env = env' }
-        | _ ->
-        runtime_error
-          (Format.asprintf "Expected list value for case-list analysis, got: %a" pp_value (force_value state.env term))
-      end
+      *)
     | Dup vars ->
       let names = lookup_runtime_names state.env vars in
       Runtime.dup runtime names;

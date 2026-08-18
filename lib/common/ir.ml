@@ -165,14 +165,8 @@ and comp_node =
     }
     | Case of {
         term: value;
-        branch1: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) * comp;
-        branch2: ((Binder.t[@name "binder"]) * (Type.t[@name "ty"])) * comp
-    }
-    | CaseL of {
-        term: value;
         ty: (Type.t[@name "ty"]);
-        nil: comp;
-        cons: ((Binder.t[@name "binder"]) * (Binder.t[@name "binder"])) * comp
+        branches: (((Binder.t[@name "binder"]) list) * comp * string) list
     }
     | New of string
     | Spawn of comp
@@ -209,10 +203,7 @@ and value_node =
     | Variable of (Var.t[@name "var"]) * (Pretype.t[@name "pretype"]) option
     | Name of (RuntimeName.t[@name "runtime_name"])
     | Tuple of value list
-    | Nil
-    | Cons of value * value
-    | Inl of value
-    | Inr of value
+    | Inject of string * value list
     | Lam of lambda
 and message_tag = string
 and message = (message_tag * value list)
@@ -313,11 +304,10 @@ and pp_message ppf (tag, vs) =
         (pp_print_comma_list pp_value) vs
 (* Parameters *)
 and pp_param ppf (param, ty) = fprintf ppf "%a: %a" Binder.pp param Type.pp ty
-and pp_branch name ppf ((bnd, ty), c) =
-    fprintf ppf "%s(%a): %a -> @[<v>%a@]"
+and pp_branch name ppf (bnds, c, _) =
+    fprintf ppf "%s(%a) -> @[<v>%a@]"
         name
-        Binder.pp bnd
-        Type.pp ty
+        (pp_print_comma_list Binder.pp) bnds
         pp_comp c
 and pp_nil name ppf c =
   fprintf ppf "%s([]) -> @[<v>%a@]"
@@ -376,19 +366,13 @@ and pp_comp ppf comp_with_pos =
             (pp_print_comma_list Binder.pp) bs
             pp_value tuple
             pp_comp cont
-    | Case { term; branch1; branch2 } ->
+    | Case { term; ty; branches } ->
         fprintf ppf
-            "case %a of {@[<v>@[<v>%a@]@,@[<v>%a@]@]}"
-            pp_value term
-            (pp_branch "inl") branch1
-            (pp_branch "inr") branch2
-    | CaseL { term; ty; nil; cons } ->
-        fprintf ppf
-            "caseL %a: %a of {@[<v>@[<v>%a@]@,@[<v>%a@]@]}"
+            "case %a : %a of {@[<v>%a@]}"
             pp_value term
             Type.pp ty
-            (pp_nil "nil") nil
-            (pp_cons "cons") cons
+            (pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf "@,")
+                (fun ppf (bnds, c, name) -> pp_branch name ppf (bnds, c, name))) branches
     | Guard { target; pattern; guards; _ } ->
         fprintf ppf
             "guard %a : %a {@,@[<v 2>  %a@]@,}"
@@ -429,11 +413,8 @@ and pp_value_node ppf value =
     | Constant c -> Constant.pp ppf c
     | Tuple vs ->
         fprintf ppf "%a" (pp_print_comma_list pp_value) vs
-    | Nil -> Format.pp_print_string ppf "Nil"
-    | Cons (v1, v2) ->
-        fprintf ppf "%a :: %a" pp_value v1 pp_value v2
-    | Inl v -> fprintf ppf "inl(%a)" pp_value v
-    | Inr v -> fprintf ppf "inr(%a)" pp_value v
+    | Inject (name, vs) ->
+        fprintf ppf "%s(%a)" name (pp_print_comma_list pp_value) vs
     | Lam { linear; parameters; result_type; body } ->
         let lin = if linear then "linfun" else "fun" in
         fprintf ppf "%s(%a): %a {@,  @[<v>%a@]@,}"
@@ -474,8 +455,6 @@ let is_fail_guard guard =
     match WithIrMetadata.node guard with
     | Fail -> true
     | _ -> false
-
-
 
 (* Substitutes a pattern solution through the program *)
 let substitute_solution sol =

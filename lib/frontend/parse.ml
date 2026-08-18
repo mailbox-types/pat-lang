@@ -31,6 +31,8 @@ let parse_and_print lexbuf =
   program
 
 let parse_file filename () =
+  (* Reset the recursive type registry to built-ins for each new file *)
+  Common.Recursive_types.reset ();
   try
     In_channel.with_open_text filename (fun inx ->
       let lexbuf = Lexing.from_channel inx in
@@ -47,6 +49,7 @@ let parse_file filename () =
       [])
 
 let parse_string x () =
+  Common.Recursive_types.reset ();
   let lexbuf = Lexing.from_string x in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = "<string>" };
   let expr = parse_and_print lexbuf in

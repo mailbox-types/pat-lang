@@ -146,6 +146,10 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 WithIrMetadata.make ~fvs (LetTuple { binders; tuple = translated_tuple; cont = final_translated_cont })
             in
             Ir.insert_dup dups translated_let_tuple
+        (* SJF TODO: Implement this for the general ADT case *)
+        | Case _ ->
+            raise <| Errors.internal_error "reference_counting.ml" "Evaluating case-expressions not yet supported"
+            (*
         | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
             let bnd1_var = Var.of_binder bnd1 in
             let bnd2_var = Var.of_binder bnd2 in
@@ -203,62 +207,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 })
             in
             Ir.insert_dup dups translated_case
-        | CaseL { term; ty; nil; cons = ((bnd1, bnd2), e) } ->
-            let bnd1_var = Var.of_binder bnd1 in
-            let bnd2_var = Var.of_binder bnd2 in
-            let nil_fvs = get_fvs nil in
-            let cons_fvs = get_fvs e in
-            let nil_owned = VarSet.inter owned nil_fvs in
-            let cons_owned =
-                VarSet.inter
-                    (VarSet.union owned (VarSet.of_list [bnd1_var; bnd2_var]))
-                    cons_fvs
-            in
-            let cons_owned_without_binders =
-                VarSet.diff cons_owned (VarSet.of_list [bnd1_var; bnd2_var])
-            in
-            (* branches_owned: all owned variables occurring in either branch *)
-            let branches_owned =
-                VarSet.inter owned (VarSet.union nil_fvs cons_owned_without_binders)
-            in
-            let mk_drop vars =
-                let var_list =
-                    VarSet.elements vars
-                    |> List.map (fun v -> (v, 1))
-                in
-                WithIrMetadata.make ~fvs:vars (Drop { vars = var_list; names = [] })
-            in
-            let nil_drop = mk_drop (VarSet.diff branches_owned nil_owned) in
-            let cons_drop = mk_drop (
-                VarSet.diff
-                    (VarSet.union branches_owned (VarSet.of_list [bnd1_var; bnd2_var]))
-                    cons_owned
-            )
-            in
-            (* borrowed variables for the term: borrowed variables + variables used in branches *)
-            let term_borrowed = VarSet.union borrowed branches_owned in
-            let term_owned = VarSet.diff owned branches_owned in
-            let (dups, translated_term) = ircv term_borrowed term_owned term in
-            let translated_nil = irc borrowed nil_owned nil in
-            let translated_cons = irc borrowed cons_owned e in
-            let final_nil_fvs = VarSet.union (get_fvs nil_drop) (get_fvs translated_nil) in
-            let final_cons_fvs = VarSet.union (get_fvs cons_drop) (get_fvs translated_cons) in
-            let final_nil =
-                WithIrMetadata.make ~fvs:final_nil_fvs (Seq (nil_drop, translated_nil))
-            in
-            let final_cons =
-                WithIrMetadata.make ~fvs:final_cons_fvs (Seq (cons_drop, translated_cons))
-            in
-            let translated_case_l_fvs = VarSet.union (get_fvs translated_term) (VarSet.union (get_fvs final_nil) (get_fvs final_cons)) in
-            let translated_case_l =
-                WithIrMetadata.make ~fvs:translated_case_l_fvs (CaseL {
-                    term = translated_term;
-                    ty;
-                    nil = final_nil;
-                    cons = ((bnd1, bnd2), final_cons)
-                })
-            in
-            Ir.insert_dup dups translated_case_l
+            *)
         | New interface ->
             WithIrMetadata.make ~fvs:VarSet.empty (New interface)
         | Spawn e ->
@@ -366,9 +315,10 @@ and insert_reference_counting_val decls borrowed owned value =
         | Atom _
         | Constant _
         | Primitive _
-        | Name _
-        | Nil ->
+        | Name _ ->
             (VarMultiset.empty, value)
+        | Inject (_s, _vs) ->
+            raise <| Errors.internal_error "reference_counting.ml" "Evaluating ADTs not yet supported"
         | Variable (x, _) ->
             if VarSet.mem x owned || VarSet.mem x decl_vars then
               (* Owned or global declaration -- no dup needed *)
@@ -379,22 +329,6 @@ and insert_reference_counting_val decls borrowed owned value =
             let (dups, vs') = transform_val_sequence decls borrowed owned vs in 
             let fvs = List.fold_left (fun acc v -> VarSet.union acc (get_fvs v)) VarSet.empty vs' in
             (dups, WithIrMetadata.make ~fvs (Tuple vs'))
-        | Cons (v1, v2) ->
-            (* Similar to tuple case but binary *)
-            let (dups, vs') = transform_val_sequence decls borrowed owned [v1; v2] in 
-            begin
-                match vs' with
-                    | [v1'; v2'] -> 
-                        let fvs = VarSet.union (get_fvs v1') (get_fvs v2') in
-                        (dups, WithIrMetadata.make ~fvs (Cons (v1', v2')))
-                    | _ -> assert false
-            end
-        | Inl v ->
-            let (dups, v) = insert_reference_counting_val decls borrowed owned v in
-            (dups, WithIrMetadata.make ~fvs:(get_fvs v) (Inl v))
-        | Inr v ->
-            let (dups, v) = insert_reference_counting_val decls borrowed owned v in
-            (dups, WithIrMetadata.make ~fvs:(get_fvs v) (Inr v))
         | Lam { linear; parameters; result_type; body } ->
             let fvs = get_fvs value in
             let body_fvs = get_fvs body in

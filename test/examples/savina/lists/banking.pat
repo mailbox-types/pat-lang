@@ -32,7 +32,6 @@ def spawnAccounts(numsAccounts: List(Int), soFar: Int, acc: List(AccountMb!)) : 
 def teller(self: TellerMb?, numAccounts : Int, numsAccounts: List(Int)): Unit {
 
   let accountMbs = spawnAccounts(numsAccounts, 1, (nil : List(AccountMb!))) in
-
   guard self: Start {
     receive Start() from self ->
 
@@ -80,26 +79,28 @@ def append(l1 : List(AccountMb![R]), l2: List(AccountMb![R])) : List(AccountMb![
 ## function ensures that the source and destination account are different.
 def choose_dst_acc(tellerMb: TellerMb!, numAccounts: Int, srcAccount: (Unit + AccountMb![R]), dstAccountMbs : List(AccountMb![R])) : Unit {
 
-  (# Randomly choose destination account to which funds shall be deposited. -2
+    # Randomly choose destination account to which funds shall be deposited. -2
     # because rand() is 0-indexed, and because we do not include the source
     # account in the random choice (i.e., the source account is not permitted to
     # send funds to itself).
     let dstAccountId = rand(numAccounts - 2) in
   
-    let (dstAccount, rest) = (pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R]))) : ((Unit + AccountMb!Credit[R]) * List(AccountMb!1[R])))
+    let (dstAccount, rest) =
+        (pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R]))) : ((Unit + AccountMb!Credit[R]) * List(AccountMb!1[R])))
     in
-  
-    (let amount = rand(200) in
-          case srcAccount : (Unit + AccountMb!) of {
-          inl(u1) : Unit -> case dstAccount : (Unit + AccountMb!) of {
-              inl(u2) : Unit -> ()
-              | inr(d) : AccountMb! -> ()
-          }
-          | inr(a) : AccountMb! -> case dstAccount : (Unit + AccountMb!) of {
-              inl(u) : Unit -> ()
-              | inr(d) : AccountMb! -> d ! Credit(tellerMb, amount, a)
-          }
-        }))
+    let amount = rand(200) in
+    case srcAccount : (Unit + AccountMb!) of {
+        inl(u1) ->
+            case dstAccount : (Unit + AccountMb!) of {
+                  inl(u2) -> ()
+                | inr(d)  -> ()
+            }
+        | inr(a) ->
+            case dstAccount : (Unit + AccountMb!) of {
+                  inl(u) -> ()
+                | inr(d) -> d ! Credit(tellerMb, amount, a)
+        }
+    }
 }
 
 ## Teller process main loop handling replies from accounts.

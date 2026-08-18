@@ -253,8 +253,7 @@ type t =
     | Base of base
     | Fun of { linear: bool; args: t list; result: t }
     | Tuple of t list
-    | Sum of (t * t)
-    | List of t
+    | Rec of (string * t list)
     (* User-written mailbox type. May not have specified QL and pattern.
        This will be desugared before IR conversion. *)
     | UserMailbox of {
@@ -296,9 +295,8 @@ let is_mailbox_type = function
 
 let rec contains_mailbox_type = function
     | Mailbox _ -> true
-    | Sum (t1, t2) -> contains_mailbox_type t1 || contains_mailbox_type t2
     | Tuple ts -> List.exists contains_mailbox_type ts
-    | List t -> contains_mailbox_type t
+    | Rec (_, ts) -> List.exists contains_mailbox_type ts
     | _ -> false
 
 (* Easy constructors *)
@@ -332,13 +330,15 @@ let rec pp ppf =
         let pp_star ppf () = pp_print_string ppf " * " in
         fprintf ppf "(%a)"
             (pp_print_list ~pp_sep:(pp_star) pp) ts
-    | Sum (t1, t2) ->
+    | Rec ("Sum", [t1; t2]) ->
         fprintf ppf "(%a + %a)"
             pp t1
             pp t2
-    | List t ->
-        fprintf ppf "List(%a)"
-            pp t
+    | Rec (s, ts) ->
+        let pp_comma ppf () = pp_print_string ppf ", " in
+        fprintf ppf "%s(%a)"
+        s
+        (pp_print_list ~pp_sep:(pp_comma) pp) ts
     | Mailbox { capability; interface; pattern; quasilinearity } ->
         let ql =
             match quasilinearity with
@@ -389,8 +389,7 @@ let rec is_lin = function
     (* !1 is unrestricted... *)
     | Mailbox { capability = Out; pattern = One; _ } -> false
     | Tuple ts -> List.exists is_lin ts
-    | Sum (t1, t2) -> is_lin t1 || is_lin t2
-    | List t -> is_lin t
+    | Rec (_, ts) -> List.exists is_lin ts
     (* ...but otherwise a mailbox type must be used linearly. *)
     | Mailbox _ -> true
     | UserMailbox _ -> assert false
@@ -407,22 +406,13 @@ let is_output_mailbox = function
 let rec contains_output_mailbox = function
     | Mailbox { capability = Out; _} -> true
     | UserMailbox { umb_capability = Out; _} -> true
-    | Sum (t1, t2) -> contains_output_mailbox t1 || contains_output_mailbox t2
-    | Tuple ts -> List.exists contains_output_mailbox ts
-    | List t -> contains_output_mailbox t
+    | Tuple ts
+    | Rec (_, ts) -> List.exists contains_output_mailbox ts
     | _ -> false
 
 let is_tuple = function
     | Tuple _ -> true
     | _ -> false
-
-let is_sum = function
-    | Sum _ -> true
-    | _ -> false
-
-let is_list = function
-  | List _ -> true
-  | _ -> false
 
 let get_pattern = function
     | Mailbox { pattern = pat; _ } -> pat
@@ -443,9 +433,8 @@ let get_quasilinearity = function
 (* make_usable always defined on datatypes in order to ensure spawn masking works *)
 let rec make_usable = function
     | Mailbox m -> Mailbox { m with quasilinearity = Quasilinearity.Usable }
-    | List t -> List (make_usable t)
     | Tuple ts -> Tuple (List.map make_usable ts)
-    | Sum (t1, t2) -> Sum (make_usable t1, make_usable t2)
+    | Rec (s, ts) -> Rec (s, (List.map make_usable ts))
     | t -> t
 
 (* make_returnable propagates returnability to datatype components
@@ -456,9 +445,8 @@ let rec make_returnable = function
         begin
             if not <| Settings.(get liberal_datatypes) then
                 match ty with
-                    | List t -> List (make_returnable t)
                     | Tuple ts -> Tuple (List.map make_returnable ts)
-                    | Sum (t1, t2) -> Sum (make_returnable t1, make_returnable t2)
+                    | Rec (s, ts) -> Rec (s, List.map make_returnable ts)
                     | _ -> ty
             else ty
         end
@@ -482,8 +470,14 @@ let make_tuple_type tys =
 
 let make_sum_type ty1 ty2 =
     if Settings.(get liberal_datatypes) then
-        Sum (ty1, ty2)
+        Rec ("Sum", [ty1; ty2])
     else
-        Sum (make_returnable ty1, make_returnable ty2)
+        Rec ("Sum", [make_returnable ty1; make_returnable ty2])
 
-let make_list_type ty = List ty
+(* SJF TODO: Once we've broken Type<->Recursive_types dependency, call into Recursive_types here rather than duplicating *)
+let list_ty_name = "List"
+let is_list = function
+    | Rec (s, _) -> String.equal s list_ty_name
+    | _ -> false
+
+let make_list_type ty = Rec ("List", [ty])

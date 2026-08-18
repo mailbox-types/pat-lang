@@ -19,10 +19,6 @@ module RuntimeValue = struct
     | Primitive of primitive_name
     | Name of RuntimeName.t
     | Tuple of t list
-    | Nil
-    | Cons of t * t
-    | Inl of t
-    | Inr of t
     | Closure of {
         lambda: lambda;
         value_env: value_env;
@@ -36,10 +32,6 @@ module RuntimeValue = struct
     | Ir.Primitive p -> Primitive p
     | Ir.Name n -> Name n
     | Ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
-    | Ir.Nil -> Nil
-    | Ir.Cons (v1, v2) -> Cons (of_ir value_env v1, of_ir value_env v2)
-    | Ir.Inl v -> Inl (of_ir value_env v)
-    | Ir.Inr v -> Inr (of_ir value_env v)
     | Ir.Lam lambda ->
       Closure { lambda; value_env }
     | Ir.Variable (v, _) ->
@@ -50,6 +42,8 @@ module RuntimeValue = struct
           runtime_error
             (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
       end
+    | Ir.Inject (_s, _vs) ->
+        runtime_error "Evaluating user-defined datatypes not yet supported"
 
   let rec to_ir runtime_value =
     match runtime_value with
@@ -63,14 +57,6 @@ module RuntimeValue = struct
       WithIrMetadata.make (Ir.Name n)
     | Tuple vs ->
       WithIrMetadata.make (Ir.Tuple (List.map to_ir vs))
-    | Nil ->
-      WithIrMetadata.make Ir.Nil
-    | Cons (v1, v2) ->
-      WithIrMetadata.make (Ir.Cons (to_ir v1, to_ir v2))
-    | Inl v ->
-      WithIrMetadata.make (Ir.Inl (to_ir v))
-    | Inr v ->
-      WithIrMetadata.make (Ir.Inr (to_ir v))
     | Closure { lambda; value_env = _ } ->
       WithIrMetadata.make (Ir.Lam lambda)
 

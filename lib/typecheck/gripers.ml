@@ -258,22 +258,13 @@ let expected_tuple_type instead pos_list =
     in
     raise (constraint_gen_error ~subsystem:Errors.GenCheck msg pos_list)
 
-let expected_sum_type instead pos_list =
+let expected_recursive_type instead pos_list =
     let msg =
         Format.asprintf
-            "Expected a sum type, but got %a."
+            "Expected a recursive type, but got %a."
             Type.pp instead
     in
     raise (constraint_gen_error ~subsystem:Errors.GenCheck msg pos_list)
-
-let expected_list_type instead pos_list =
-    let msg =
-        Format.asprintf
-            "Expected a list type, but got %a."
-            Type.pp instead
-    in
-    raise (constraint_gen_error ~subsystem:Errors.GenCheck msg pos_list)
-
 
 let invalid_ql_sequencing var pos_list =
     let msg =

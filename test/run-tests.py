@@ -23,6 +23,9 @@ def run_tests(testsuite):
         nonlocal overall_result
         print("===", "Group:", group["group"], "===")
         for test in group["tests"]:
+            if test.get("ignore", False):
+                print(f"{test['name']}: (IGNORED)")
+                continue
             command = [executable] + test.get("args", []) + [test["filename"]]
             process_result = subprocess.run(
                 command,

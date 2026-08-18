@@ -40,17 +40,10 @@ def room(self: RoomMb?, capacity: Int, waiters: List(CustomerMb!), waiting: Int,
             }
             else {
                 sleep(5);
-<<<<<<< HEAD
                 spawn { room(self, capacity, (customerMb :: waiters), (waiting + 1), barber) }
             }
         receive Next() from self ->
             caseL waiters : List(CustomerMb!) of {
-=======
-                room(self, capacity, (customerMb :: waiters), (waiting + 1), barber)
-            }
-        receive Next() from self ->
-            case waiters : List(CustomerMb!) of {
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
                 nil ->
                     sleep(5);
                     room(self, capacity, (nil : List(CustomerMb!)), waiting, barber)
@@ -106,11 +99,7 @@ def spawnCustomers(self: SelectorMb?, generator: Int, soFar: Int, acc : List(Cus
 }
 
 def startCustomers(customerMbs : List(CustomerMb!), room : RoomMb!) : Unit {
-<<<<<<< HEAD
     caseL customerMbs : List(CustomerMb!) of {
-=======
-    case customerMbs : List(CustomerMb!) of {
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
         nil -> ()
         | (a :: as) ->
             a ! Start(room);
@@ -119,11 +108,7 @@ def startCustomers(customerMbs : List(CustomerMb!), room : RoomMb!) : Unit {
 }
 
 def doneCustomers(customerMbs : List(CustomerMb!)) : Unit {
-<<<<<<< HEAD
     caseL customerMbs : List(CustomerMb!) of {
-=======
-    case customerMbs : List(CustomerMb!) of {
->>>>>>> 904c4ea6bba0191dca3f424e9f7d1f0bb027dccc
         nil -> ()
         | (a :: as) ->
             a ! Done();

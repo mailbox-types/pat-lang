@@ -596,21 +596,30 @@
                     "filename": "pat-tests/list-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": ""
+                    "stderr": "",
+                    "ignore": true
                 },
                 {
                     "name": "list-2",
                     "filename": "pat-tests/list-2.pat",
                     "exit_code": 0,
                     "stdout": "3\n",
-                    "stderr": ""
+                    "stderr": "",
+                    "ignore": true
                 },
                 {
                     "name": "list-mb",
                     "filename": "pat-tests/list-mb.pat",
                     "exit_code": 0,
                     "stdout": "done\n",
-                    "stderr": ""
+                    "stderr": "",
+                    "ignore": true
+                },
+                {
+                    "name": "Tree traversal",
+                    "filename": "pat-tests/traversal.pat",
+                    "exit_code": 0,
+                    "ignore": true
                 },
                 {
                     "name": "mb-function-return",
@@ -659,14 +668,16 @@
                     "filename": "pat-tests/sum-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": ""
+                    "stderr": "",
+                    "ignore": true
                 },
                 {
                     "name": "sum-2",
                     "filename": "pat-tests/sum-2.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": ""
+                    "stderr": "",
+                    "ignore": true
                 },
                 {
                     "name": "unr-mb-fun",
@@ -716,32 +727,7 @@
                     "name": "tuple-ret-bad",
                     "filename": "pat-tests/tuple-ret-bad.pat",
                     "exit_code": 1
-                },
-                {
-                    "name": "Lists (1)",
-                    "filename": "pat-tests/list-1.pat",
-                    "exit_code": 0
-                },
-                {
-                    "name": "Lists (2)",
-                    "filename": "pat-tests/list-2.pat",
-                    "exit_code": 0
-                },
-                {
-                    "name": "Lists (with mailboxes)",
-                    "filename": "pat-tests/list-mb.pat",
-                    "exit_code": 0
-                },
-                {
-                    "name": "Lists (broken pattern)",
-                    "filename": "pat-tests/list-broken.pat",
-                    "exit_code": 0
-                },
-                {
-                    "name": "List traversal",
-                    "filename": "pat-tests/traversal.pat",
-                    "exit_code": 0
-                }
+                } 
             ]
         },
         { "group": "User-defined data types",

@@ -174,6 +174,12 @@ These will be added in later
 %left PLUS MINUS
 %left STAR DIV
 
+(* Resolves the shift/reduce conflict between continuing a data constructor's
+   field list (data_field_list below) and ending it so that whatever follows
+   the data declarations (typically a top-level expr) can begin. *)
+%nonassoc END_DATA_FIELDS
+%nonassoc VARIABLE CONSTRUCTOR LEFT_PAREN
+
 (* Start parsing *)
 %start <expr> expr_main
 %start <program * source_code > program
@@ -195,9 +201,16 @@ data_field:
     | LEFT_PAREN any_constructor RIGHT_PAREN { DBase $2 }
     | LEFT_PAREN any_constructor data_field+ RIGHT_PAREN { DApp ($2, $3) }
 
+(* Zero or more data fields, written out explicitly (rather than via the
+   data_field* combinator) so the empty-list production can carry the
+   %prec annotation that resolves the shift/reduce conflict described above. *)
+data_field_list:
+    | (* empty *) %prec END_DATA_FIELDS { [] }
+    | data_field data_field_list { $1 :: $2 }
+
 (* A single data constructor: name followed by zero or more fields *)
 data_ctor:
-    | any_constructor data_field* { ($1, $2) }
+    | any_constructor data_field_list { ($1, $2) }
 
 (* Data type declaration with side-effecting registration *)
 data_decl:

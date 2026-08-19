@@ -146,9 +146,68 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
                 WithIrMetadata.make ~fvs (LetTuple { binders; tuple = translated_tuple; cont = final_translated_cont })
             in
             Ir.insert_dup dups translated_let_tuple
-        (* SJF TODO: Implement this for the general ADT case *)
-        | Case _ ->
-            raise <| Errors.internal_error "reference_counting.ml" "Evaluating case-expressions not yet supported"
+        | Case { term; ty; branches } ->
+            let mk_drop vars transformed_comp =
+                let var_list =
+                    VarSet.elements vars
+                    |> List.map (fun v -> (v, 1))
+                in
+                let drop = WithIrMetadata.make ~fvs:vars (Drop { vars = var_list; names = [] }) in
+                WithIrMetadata.make ~fvs:vars (Seq (drop, transformed_comp))
+            in
+            (* The owned set of each branch is the owned environment overall,
+               extended with bound vars, intersected with FVs of body*)
+            (* Collect all envs along with transformed (incl. drops) bodies *)
+            let transformed_branches_with_envs =
+                List.map (fun (params, comp, constr)  ->
+                    let params_vars = List.map Var.of_binder params |> VarSet.of_list in
+                    let owned_with_params = VarSet.union owned params_vars in
+                    let comp_owned =
+                        VarSet.inter
+                            owned_with_params
+                            (WithIrMetadata.fvs comp)
+                    in
+                    let to_drop = VarSet.diff owned_with_params comp_owned in
+                    let transformed_comp =
+                        mk_drop 
+                            to_drop
+                            (irc borrowed comp_owned comp)
+                    in
+                    (comp_owned, (params, transformed_comp, constr))
+                ) branches
+            in
+            let (transformed_branches_envs, transformed_branches_bodies) =
+                List.split transformed_branches_with_envs
+            in
+            (* Union of all variables required to type branches
+                (thus must be borrowed when typing subject) *)
+            let all_branches_owned =
+                VarSet.union_many transformed_branches_envs
+            in
+            let borrowed_subj = VarSet.union borrowed all_branches_owned in
+            let owned_subj = VarSet.diff owned borrowed_subj in
+            let (dups, translated_term) = ircv borrowed_subj owned_subj term in
+            (* Get union of all FVs in each branch (used for calculating overall term FVs) *)
+            let branches_fvs =
+                List.map (fun (params, comp, _) ->
+                    List.map Var.of_binder params
+                    |> VarSet.of_list
+                    |> VarSet.diff (WithIrMetadata.fvs comp)) transformed_branches_bodies
+                    |> VarSet.union_many
+            in
+            let translated_case_fvs =
+                VarSet.union
+                    (get_fvs translated_term)
+                    branches_fvs
+            in
+            let translated_case =
+                WithIrMetadata.make ~fvs:translated_case_fvs (Case {
+                    term = translated_term;
+                    branches = transformed_branches_bodies;
+                    ty
+                })
+            in
+            Ir.insert_dup dups translated_case
             (*
         | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
             let bnd1_var = Var.of_binder bnd1 in
@@ -317,8 +376,10 @@ and insert_reference_counting_val decls borrowed owned value =
         | Primitive _
         | Name _ ->
             (VarMultiset.empty, value)
-        | Inject (_s, _vs) ->
-            raise <| Errors.internal_error "reference_counting.ml" "Evaluating ADTs not yet supported"
+        | Inject (s, vs) ->
+            let (dups, vs') = transform_val_sequence decls borrowed owned vs in 
+            let fvs = List.fold_left (fun acc v -> VarSet.union acc (get_fvs v)) VarSet.empty vs' in
+            (dups, WithIrMetadata.make ~fvs (Inject (s, vs')))
         | Variable (x, _) ->
             if VarSet.mem x owned || VarSet.mem x decl_vars then
               (* Owned or global declaration -- no dup needed *)

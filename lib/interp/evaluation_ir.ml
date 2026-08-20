@@ -12,6 +12,7 @@ open Util.Utility
 module Var = Ir.Var
 module Binder = Ir.Binder
 module RuntimeName = Ir.RuntimeName
+module VarSet = Ir.VarSet
 
 type program = {
     prog_decls: decl list;
@@ -75,6 +76,10 @@ and value =
     | Lam of lambda
 and lambda = {
     parameters: Binder.t list;
+    (* Free variables of the lambda as a whole, computed during reference counting.
+       Retained here so the runtime can drop a dying closure's captured refs without
+       having to recompute free variables by re-traversing the body. *)
+    fvs: VarSet.t;
     body: comp
 }
 and message_tag = string
@@ -197,7 +202,7 @@ and pp_value ppf value =
         fprintf ppf "%a" (pp_print_comma_list pp_value) vs
     | Inject (name, vs) ->
         fprintf ppf "%s(%a)" name (pp_print_comma_list pp_value) vs
-    | Lam { parameters; body } ->
+    | Lam { parameters; body; _ } ->
         fprintf ppf "fun(%a) {@,  @[<v>%a@]@,}"
             (pp_print_comma_list Binder.pp) parameters
             pp_comp body

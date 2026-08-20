@@ -1,7 +1,6 @@
 open Common
 open Common_types
-open Util.Utility
-open Ir
+open Evaluation_ir
 open Runtime_common
 
 let max_steps_before_yield = 20
@@ -9,13 +8,9 @@ let max_steps_before_yield = 20
 module VarMap = Runtime_common.VarMap
 module RuntimeNameMap = Map.Make(RuntimeName)
 
-let get_node = WithIrMetadata.node
-let get_fvs = WithIrMetadata.fvs
-let with_val_fvs value = WithIrMetadata.make ~fvs:(get_fvs value)
-
-let unit_value = WithIrMetadata.make (Tuple [])
-let mk_const c = WithIrMetadata.make (Constant c)
-let mk_name a = WithIrMetadata.make (Name a)
+let unit_value = Tuple []
+let mk_const c = Constant c
+let mk_name a = Name a
 
 let runtime_of_ir env value = RuntimeValue.of_ir env value
 
@@ -57,23 +52,23 @@ let decl_map program =
     VarMap.empty
     program.prog_decls
 
-(* Fully resolves a value to a closed runtime value, substituting any free variables from the
-   environment. An unbound variable referring to a top-level declaration resolves to a
-   [Declaration], rather than being an error. *)
-let rec force_value decls env value : RuntimeValue.t =
-  match get_node value with
-  | VAnnotate (v, _) -> force_value decls env v
-  | Variable (var, _) ->
+(* Resolves a bare variable to a closed runtime value. An unbound variable referring
+   to a top-level declaration resolves to a [Declaration], rather than being an error. *)
+let force_var decls env var : RuntimeValue.t =
+  match VarMap.find_opt var env with
+  | Some bound -> bound
+  | None ->
     begin
-      match VarMap.find_opt var env with
-      | Some bound -> bound
-      | None ->
-        begin
-          match VarMap.find_opt var decls with
-          | Some _ -> RuntimeValue.Declaration var
-          | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
-        end
+      match VarMap.find_opt var decls with
+      | Some _ -> RuntimeValue.Declaration var
+      | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
     end
+
+(* Fully resolves a value to a closed runtime value, substituting any free variables from the
+   environment. *)
+let force_value decls env value : RuntimeValue.t =
+  match value with
+  | Variable var -> force_var decls env var
   | _ -> RuntimeValue.of_ir env value
 
 let runtime_name_of_value env value =
@@ -88,6 +83,13 @@ let runtime_name_of_runtime_value value =
   | RuntimeValue.Name runtime_name -> Some runtime_name
   | _ -> None
 
+let runtime_name_of_var env var =
+  match VarMap.find_opt var env with
+  | Some (RuntimeValue.Name n) -> n
+  | Some _ -> runtime_error "Non runtime-name in runtime_name_of_var"
+  | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
+
+
 let lookup_runtime_names env vars =
   List.filter_map
     (fun (var, count) ->
@@ -95,6 +97,38 @@ let lookup_runtime_names env vars =
       | None -> None
       | Some name -> Some (name, count))
     vars
+
+(* Looks up the definition, free variable set, and stored environment of a closure. *)
+let lookup_lambda runtime name =
+  match Runtime.lookup_tracked_value runtime name with
+    | RuntimeValue.Closure { lambda; value_env } ->
+      let fvs =
+        value_env
+        |> VarMap.bindings
+        |> List.map fst
+        |> VarSet.of_list
+      in
+      (lambda, fvs, value_env)
+    | bad ->
+      runtime_error
+        (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
+          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
+
+let lookup_constructor runtime name =
+  match Runtime.lookup_tracked_value runtime name with
+    | RuntimeValue.Inject (tag, values) -> (tag, values)
+    | bad ->
+      runtime_error
+        (Format.asprintf "Looking up inject in RC map: name %a maps to non-inject %a"
+          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
+
+let lookup_tuple runtime name =
+  match Runtime.lookup_tracked_value runtime name with
+    | RuntimeValue.Tuple values -> values
+    | bad ->
+      runtime_error
+        (Format.asprintf "Looking up tuple in RC map: name %a maps to non-tuple %a"
+          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
 
 let init_state program comp =
   { decls = decl_map program; current_comp = comp; env = VarMap.empty; stack = [] }
@@ -150,8 +184,11 @@ let bool_of_value decls env value =
     runtime_error
       (Format.asprintf "Expected boolean test value, got: %a" RuntimeValue.pp forced)
 
-let tuple_values_of_value decls env value =
-  match force_value decls env value with
+let tuple_values_of_var decls env var =
+  (* FIXME: if the tuple was heap-allocated (returned via a `let`), var resolves to a
+     RuntimeValue.Name rather than a Tuple; need a Perceus-style borrow/dereference through
+     the RC table here (cf. lookup_lambda, which only handles the Closure case). *)
+  match force_var decls env var with
   | RuntimeValue.Tuple values -> values
   | forced ->
     runtime_error
@@ -340,14 +377,12 @@ let rec step_current runtime state =
     finish_current { comp_state with current_comp = next }
   in
   let return comp_state value =
-    step_to comp_state (WithIrMetadata.make (Ir.Return value))
+    step_to comp_state (Return value)
   in
   let return_unit comp_state =
-    return comp_state (WithIrMetadata.make (Tuple []))
+    return comp_state (Tuple [])
   in
-  match get_node state.current_comp with
-    | Annotate (comp, _) ->
-      step_to state comp
+  match state.current_comp with
     (* Seq: install frame for comp2, evaluate comp1 *)
     | Seq (comp1, comp2) ->
       let next_current =
@@ -368,14 +403,16 @@ let rec step_current runtime state =
     (* App: Check whether applying a primitive or variable. If a primitive, handle separately.
         If a variable, looks up in declarations; if a primitive, handles directly *)
     | App { func; args } ->
-      let func = force_value state.decls state.env func in
+      let func = force_var state.decls state.env func in
       let args = List.map (force_value state.decls state.env) args in
       begin
         let open RuntimeValue in
+        (* We will never map the function variable directly to a closure as this
+          is always reference-counted, so no need to handle that case. *)
         match func with
         | Primitive prim ->
           let result = apply_primitive runtime prim args in
-          finish_current { state with current_comp = with_val_fvs result (Return result) }
+          finish_current { state with current_comp = Return result }
         | Declaration var ->
           begin
             match VarMap.find_opt var state.decls with
@@ -383,24 +420,17 @@ let rec step_current runtime state =
               runtime_error
                 (Format.asprintf "Attempted to call unknown declaration %a" Var.pp var)
             | Some decl ->
-              let binders = List.map fst decl.decl_parameters in
-              let call_env = bind_many_rt binders args VarMap.empty in
+              let call_env = bind_many_rt decl.decl_parameters args VarMap.empty in
               finish_current { state with current_comp = decl.decl_body; env = call_env }
           end
-        (* Applying a function literal. We don't need to heap-allocate this, or do anything
-            special with closures, as it can't be re-called. *)
-        | Closure { lambda; value_env } ->
-            let binders = List.map fst lambda.parameters in
-            let extended_env = bind_many_rt binders args value_env in
-            finish_current { state with current_comp = lambda.body; env = extended_env  }
         (* We've previously bound the function. Need to dup its FVs, drop a
           ref, extend the env with param -> arg mappings, and eval body *) 
         | Name name ->
-          let (lambda, fvs, closure_env) = Runtime.lookup_lambda runtime name in
+          let (lambda, fvs, closure_env) = lookup_lambda runtime name in
           let dup_names = lookup_runtime_names state.env (List.map (fun n -> (n, 1)) (VarSet.elements fvs)) in
           Runtime.dup runtime dup_names;
           Runtime.drop runtime [ (name, 1) ];
-          let extended_env = bind_many_rt (List.map fst lambda.parameters) args closure_env in
+          let extended_env = bind_many_rt lambda.parameters args closure_env in
           finish_current { state with current_comp = lambda.body; env = extended_env }
         | other ->
           runtime_error
@@ -414,31 +444,44 @@ let rec step_current runtime state =
       else
         finish_current { state with current_comp = else_expr }
     | LetTuple { binders; tuple; cont } ->
-      let tuple_values = tuple_values_of_value state.decls state.env tuple in
-      let tuple_binders = List.map fst binders in
-      if List.length tuple_binders <> List.length tuple_values then
+      let tuple_values = tuple_values_of_var state.decls state.env tuple in
+      if List.length binders <> List.length tuple_values then
         runtime_error "Tuple arity mismatch in let-tuple";
-      let env' = bind_many_rt tuple_binders tuple_values state.env in
+      let env' = bind_many_rt binders tuple_values state.env in
       finish_current { state with current_comp = cont; env = env' }
     | Case _ ->
-      runtime_error "Evaluating case-expressions not yet implemented"
       (*
-    | Case { term; branch1 = ((binder1, _), comp1); branch2 = ((binder2, _), comp2) } ->
-      begin
-        match get_node (force_value state.env term) with
-        | Inl value ->
-          let env' = VarMap.add (Var.of_binder binder1) (runtime_of_ir state.env value) state.env in
-          finish_current { state with current_comp = comp1; env = env' }
-        | Inr value ->
-          let env' = VarMap.add (Var.of_binder binder2) (runtime_of_ir state.env value) state.env in
-          finish_current { state with current_comp = comp2; env = env' }
-        | _ ->
-        runtime_error
-          (Format.asprintf "Expected sum value for case analysis, got: %a" pp_value (force_value state.env term))
+        let scrutinee_name = runtime_name_of_var state.env scrutinee in
+        let (constructor, arguments) = lookup_constructor runtime scrutinee_name in
+        let dup_names = lookup_runtime_names state.env (List.map (fun n -> (n, 1)) (VarSet.elements fvs)) in
+        Runtime.dup runtime dup_names;
+        Runtime.drop runtime [ (name, 1) ];
+        let extended_env = bind_many_rt lambda.parameters args closure_env in
+        finish_current { state with current_comp = lambda.body; env = extended_env }
+        *)
+        failwith "TODO"
+(*
+
+        (* FIXME: same Name-vs-Inject dereferencing gap as tuple_values_of_var above. *)
+        match force_var state.decls state.env scrutinee with
+        | RuntimeValue.Inject (tag, values) ->
+          begin
+            match List.find_opt (fun (_, _, name) -> String.equal name tag) branches with
+            | None ->
+              runtime_error
+                (Format.asprintf "No matching case branch for constructor '%s'" tag)
+            | Some (binders, branch_body, _) ->
+              if List.length binders <> List.length values then
+                runtime_error "Constructor arity mismatch in case expression";
+              let env' = bind_many_rt binders values state.env in
+              finish_current { state with current_comp = branch_body; env = env' }
+          end
+        | other ->
+          runtime_error
+            (Format.asprintf "Expected a data constructor for case analysis, got: %a" RuntimeValue.pp other)
       end
       *)
-
-    | New _ -> return state (WithIrMetadata.make <| Ir.Name (Runtime.new_mailbox runtime))
+    | New _ -> return state (Name (Runtime.new_mailbox runtime))
     | Send { target; message = (tag, payloads); iname = _ } ->
       let mb_name = runtime_name_of_value state.env target in
       let runtime_message = (tag, List.map (RuntimeValue.of_ir state.env) payloads) in
@@ -447,7 +490,7 @@ let rec step_current runtime state =
     | Guard { target; guards; _ } ->
       let mb_name = runtime_name_of_value state.env target in
       let tags = List.concat_map (fun g ->
-        match get_node g with
+        match g with
           | Receive recv -> [recv.tag]
           | _ -> []
         ) guards
@@ -459,17 +502,25 @@ let rec step_current runtime state =
             let env' =
               state.env
               |> bind_many_rt recv_guard.payload_binders rt_vals
-              |> bind recv_guard.mailbox_binder (WithIrMetadata.make (Name mb_name))
+              |> bind recv_guard.mailbox_binder (Name mb_name)
             in
             finish_current { state with env = env'; current_comp = recv_guard.cont } 
         | Freed ->
             let (bnd, cont) = find_empty_guard guards in
-            let env' = bind bnd (WithIrMetadata.make (Name mb_name)) state.env in
+            let env' = bind bnd (Name mb_name) state.env in
             finish_current { state with env = env'; current_comp = cont } 
       end
     | Free (target, _iname) ->
       let rt_name = runtime_name_of_value state.env target in
       Runtime.free_mailbox runtime rt_name;
+      return_unit state
+    | Dup vars ->
+      let names = lookup_runtime_names state.env vars in
+      Runtime.dup runtime names;
+      return_unit state
+    | Drop { vars; names } ->
+      let var_names = lookup_runtime_names state.env vars in
+      Runtime.drop runtime (var_names @ names);
       return_unit state
     | Spawn comp ->
       Runtime.spawn runtime

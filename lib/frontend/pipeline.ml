@@ -6,8 +6,8 @@ let desugar p =
     |> Desugar_let_annotations.desugar
     |> Desugar_sugared_guards.desugar
 
-let with_reference_counting prog : Ir.program = 
-    Interp.Reference_counting.insert_reference_counting prog 
+let with_reference_counting prog : Interp.Evaluation_ir.program =
+    Interp.Reference_counting.insert_reference_counting prog
 
 let typecheck p ir = 
     let () =
@@ -20,7 +20,7 @@ let typecheck p ir =
         if Settings.(get show_ref_counting) then
             Format.printf
                 "=== With Reference Counting: ===\n%a\n\n"
-                Ir.pp_program
+                Interp.Evaluation_ir.pp_program
                 (with_reference_counting ir)
     in
     let ir, prety_opt = Typecheck.Pretypecheck.check ir in

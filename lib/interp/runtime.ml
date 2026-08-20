@@ -1,7 +1,7 @@
 open Common
 open Runtime_common
 open Eio
-open Ir
+open Evaluation_ir
 
 (* A mailbox is represented internally as a pair of a reference count, and a
 list of runtime messages. *)
@@ -110,8 +110,7 @@ and update_value_refcount runtime name count sign =
         match value with
         | RuntimeValue.Closure { lambda; value_env } ->
           let fv_runtime_names =
-            lambda.body
-            |> WithIrMetadata.fvs
+            lambda.fvs
             |> VarSet.elements
             |> List.filter_map (fun fv ->
                 match VarMap.find_opt fv value_env with
@@ -236,26 +235,11 @@ let drop (runtime : t) (counts : (RuntimeName.t * int) list) : unit =
   let to_wake = apply_refcount_delta runtime counts (-1) in
   wake_blocked_many runtime to_wake
 
-let lookup_lambda runtime name =
+let lookup_tracked_value (runtime : t) (name : RuntimeName.t) : RuntimeValue.t =
   match Hashtbl.find_opt runtime.reference_counted_values name with
-    | Some (_, runtime_value) ->
-      begin
-        match runtime_value with
-          | RuntimeValue.Closure { lambda; value_env } ->
-              let fvs =
-                value_env
-                |> VarMap.bindings
-                |> List.map fst
-                |> VarSet.of_list
-              in
-              (lambda, fvs, value_env)
-          | bad ->
-              runtime_error 
-                (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
-                  RuntimeName.pp name Ir.pp_value (RuntimeValue.to_ir bad))
-      end
+    | Some (_, runtime_value) -> runtime_value
     | None -> runtime_error
-      (Format.asprintf "Looking up lambda in RC map: name %a unbound" RuntimeName.pp name)
+      (Format.asprintf "Looking up tracked value in RC map: name %a unbound" RuntimeName.pp name)
 
 let record_value runtime rt_val =
   let new_ref = RuntimeName.make_value () in

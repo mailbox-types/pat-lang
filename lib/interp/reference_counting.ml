@@ -320,7 +320,7 @@ and insert_reference_counting_val decls borrowed owned value : VarMultiset.t * E
             let to_drop = List.map (fun v -> (v, 1)) unused_vars in
             let body_trans = insert_reference_counting_comp decls VarSet.empty body_owned_vars body in
             let transformed_body = insert_drop to_drop body_trans in
-            (to_dup, Evaluation_ir.Lam { parameters = List.map fst parameters; body = transformed_body })
+            (to_dup, Evaluation_ir.Lam { parameters = List.map fst parameters; fvs; body = transformed_body })
 and insert_reference_counting_guard decls borrowed guards_owned guard : Evaluation_ir.guard =
     let irc borrowed owned c = insert_reference_counting_comp decls borrowed owned c in
     match WithIrMetadata.node guard with
@@ -361,6 +361,7 @@ let insert_reference_counting prog : Evaluation_ir.program =
         |> List.map (fun (decl : Ir.decl) -> decl.decl_name)
     in
     let transform_body c =
+        let c = let_insert c in
         insert_reference_counting_comp
             decls
             Ir.VarSet.empty
@@ -368,17 +369,18 @@ let insert_reference_counting prog : Evaluation_ir.program =
             c
     in
     let transform_decl (decl : Ir.decl) : Evaluation_ir.decl =
+        let decl_body = let_insert decl.decl_body in
         let parameter_vars =
             decl.decl_parameters
             |> List.map (fun (b, _) -> Ir.Var.of_binder b)
         in
-        let body_fvs = get_fvs decl.decl_body in
+        let body_fvs = get_fvs decl_body in
         let (used_params, unused_params) =
             List.partition (fun v -> VarSet.mem v body_fvs) parameter_vars
         in
         let body_owned_vars = used_params |> Ir.VarSet.of_list in
         let body_trans =
-            insert_reference_counting_comp decls Ir.VarSet.empty body_owned_vars decl.decl_body
+            insert_reference_counting_comp decls Ir.VarSet.empty body_owned_vars decl_body
         in
         let decl_body = insert_drop (List.map (fun v -> (v, 1)) unused_params) body_trans in
         {

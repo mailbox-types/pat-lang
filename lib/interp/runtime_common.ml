@@ -1,5 +1,5 @@
 open Common
-open Ir
+open Evaluation_ir
 
 module VarMap = Map.Make(Var)
 module RuntimeMap = Map.Make(RuntimeName)
@@ -28,17 +28,16 @@ module RuntimeValue = struct
     | Declaration of Var.t
 
   let rec of_ir value_env value =
-    match WithIrMetadata.node value with
-    | Ir.VAnnotate (v, _) -> of_ir value_env v
-    | Ir.Atom a -> Atom a
-    | Ir.Constant c -> Constant c
-    | Ir.Primitive p -> Primitive p
-    | Ir.Name n -> Name n
-    | Ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
-    | Ir.Inject (s, vs) -> Inject (s, List.map (of_ir value_env) vs)
-    | Ir.Lam lambda ->
+    match value with
+    | Evaluation_ir.Atom a -> Atom a
+    | Evaluation_ir.Constant c -> Constant c
+    | Evaluation_ir.Primitive p -> Primitive p
+    | Evaluation_ir.Name n -> Name n
+    | Evaluation_ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
+    | Evaluation_ir.Inject (s, vs) -> Inject (s, List.map (of_ir value_env) vs)
+    | Evaluation_ir.Lam lambda ->
       Closure { lambda; value_env }
-    | Ir.Variable (v, _) ->
+    | Evaluation_ir.Variable v ->
       begin
       match VarMap.find_opt v value_env with
         | Some irv -> irv
@@ -49,30 +48,22 @@ module RuntimeValue = struct
 
   let rec to_ir runtime_value =
     match runtime_value with
-    | Atom a ->
-      WithIrMetadata.make (Ir.Atom a)
-    | Constant c ->
-      WithIrMetadata.make (Ir.Constant c)
-    | Primitive p ->
-      WithIrMetadata.make (Ir.Primitive p)
-    | Name n ->
-      WithIrMetadata.make (Ir.Name n)
-    | Tuple vs ->
-      WithIrMetadata.make (Ir.Tuple (List.map to_ir vs))
-    | Inject (s, vs) ->
-      WithIrMetadata.make (Ir.Inject (s, List.map to_ir vs))
-    | Closure { lambda; value_env = _ } ->
-      WithIrMetadata.make (Ir.Lam lambda)
-    | Declaration var ->
-      WithIrMetadata.make (Ir.Variable (var, None))
+    | Atom a -> Evaluation_ir.Atom a
+    | Constant c -> Evaluation_ir.Constant c
+    | Primitive p -> Evaluation_ir.Primitive p
+    | Name n -> Evaluation_ir.Name n
+    | Tuple vs -> Evaluation_ir.Tuple (List.map to_ir vs)
+    | Inject (s, vs) -> Evaluation_ir.Inject (s, List.map to_ir vs)
+    | Closure { lambda; value_env = _ } -> Evaluation_ir.Lam lambda
+    | Declaration var -> Evaluation_ir.Variable var
 
   let pp ppf runtime_value =
-    Ir.pp_value ppf (to_ir runtime_value)
+    Evaluation_ir.pp_value ppf (to_ir runtime_value)
 end
 
 type value_env = RuntimeValue.value_env
 
-type runtime_message = (Ir.message_tag * RuntimeValue.t list)
+type runtime_message = (message_tag * RuntimeValue.t list)
 
 (* Only closures and tuples need to be reference counted (data constructors
    are not yet representable as runtime values). *)
@@ -90,7 +81,7 @@ let rec find_empty_guard guards =
   | [] -> runtime_error "No messages available but no 'empty' guard."
   | guard :: rest ->
     begin
-      match WithIrMetadata.node guard with
+      match guard with
       | Empty (mailbox_binder, cont) -> (mailbox_binder, cont)
       | _ -> find_empty_guard rest
     end
@@ -127,7 +118,7 @@ let rec find_receive_guard tag guards =
       (Format.asprintf "No receive guard available for message tag %s. This should not happen." tag)
   | guard :: rest ->
     begin
-      match WithIrMetadata.node guard with
+      match guard with
       | Receive recv_guard when recv_guard.tag = tag -> recv_guard
       | _ -> find_receive_guard tag rest 
     end

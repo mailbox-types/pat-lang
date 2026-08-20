@@ -112,7 +112,7 @@ let lookup_lambda runtime name =
     | bad ->
       runtime_error
         (Format.asprintf "Looking up lambda in RC map: name %a maps to non-lambda %a"
-          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
+          RuntimeName.pp name RuntimeValue.pp bad)
 
 let lookup_constructor runtime name =
   match Runtime.lookup_tracked_value runtime name with
@@ -120,7 +120,7 @@ let lookup_constructor runtime name =
     | bad ->
       runtime_error
         (Format.asprintf "Looking up inject in RC map: name %a maps to non-inject %a"
-          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
+          RuntimeName.pp name RuntimeValue.pp bad)
 
 let lookup_tuple runtime name =
   match Runtime.lookup_tracked_value runtime name with
@@ -128,7 +128,7 @@ let lookup_tuple runtime name =
     | bad ->
       runtime_error
         (Format.asprintf "Looking up tuple in RC map: name %a maps to non-tuple %a"
-          RuntimeName.pp name Evaluation_ir.pp_value (RuntimeValue.to_ir bad))
+          RuntimeName.pp name RuntimeValue.pp bad)
 
 let init_state program comp =
   { decls = decl_map program; current_comp = comp; env = VarMap.empty; stack = [] }

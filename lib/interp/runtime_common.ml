@@ -1,4 +1,5 @@
 open Common
+open Common_types
 open Evaluation_ir
 
 module VarMap = Map.Make(Var)
@@ -27,38 +28,35 @@ module RuntimeValue = struct
     (* An unresolved reference to a top-level declaration. *)
     | Declaration of Var.t
 
-  let rec of_ir value_env value =
+  let resolve_var value_env v =
+    match VarMap.find_opt v value_env with
+      | Some irv -> irv
+      | None ->
+        runtime_error
+          (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
+
+  let of_ir value_env value =
     match value with
     | Evaluation_ir.Atom a -> Atom a
     | Evaluation_ir.Constant c -> Constant c
     | Evaluation_ir.Primitive p -> Primitive p
     | Evaluation_ir.Name n -> Name n
-    | Evaluation_ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
-    | Evaluation_ir.Inject (s, vs) -> Inject (s, List.map (of_ir value_env) vs)
+    | Evaluation_ir.Tuple vs -> Tuple (List.map (resolve_var value_env) vs)
+    | Evaluation_ir.Inject (s, vs) -> Inject (s, List.map (resolve_var value_env) vs)
     | Evaluation_ir.Lam lambda ->
       Closure { lambda; value_env }
-    | Evaluation_ir.Variable v ->
-      begin
-      match VarMap.find_opt v value_env with
-        | Some irv -> irv
-        | None ->
-          runtime_error
-            (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
-      end
+    | Evaluation_ir.Variable v -> resolve_var value_env v
 
-  let rec to_ir runtime_value =
+  let rec pp ppf runtime_value =
     match runtime_value with
-    | Atom a -> Evaluation_ir.Atom a
-    | Constant c -> Evaluation_ir.Constant c
-    | Primitive p -> Evaluation_ir.Primitive p
-    | Name n -> Evaluation_ir.Name n
-    | Tuple vs -> Evaluation_ir.Tuple (List.map to_ir vs)
-    | Inject (s, vs) -> Evaluation_ir.Inject (s, List.map to_ir vs)
-    | Closure { lambda; value_env = _ } -> Evaluation_ir.Lam lambda
-    | Declaration var -> Evaluation_ir.Variable var
-
-  let pp ppf runtime_value =
-    Evaluation_ir.pp_value ppf (to_ir runtime_value)
+    | Atom a -> Format.pp_print_string ppf (":" ^ a)
+    | Constant c -> Constant.pp ppf c
+    | Primitive p -> Format.pp_print_string ppf p
+    | Name n -> RuntimeName.pp ppf n
+    | Tuple ts -> Format.fprintf ppf "%a" (Util.Utility.pp_print_comma_list pp) ts
+    | Inject (s, ts) -> Format.fprintf ppf "%s(%a)" s (Util.Utility.pp_print_comma_list pp) ts
+    | Closure { lambda; _ } -> Format.fprintf ppf "fun(%a) { ... }" (Util.Utility.pp_print_comma_list Binder.pp) lambda.parameters
+    | Declaration var -> Var.pp ppf var
 end
 
 type value_env = RuntimeValue.value_env

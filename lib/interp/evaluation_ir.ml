@@ -71,8 +71,8 @@ and value =
     | Primitive of primitive_name
     | Variable of Var.t
     | Name of RuntimeName.t
-    | Tuple of value list
-    | Inject of string * value list
+    | Tuple of Var.t list
+    | Inject of string * Var.t list
     | Lam of lambda
 and lambda = {
     parameters: Binder.t list;
@@ -199,9 +199,9 @@ and pp_value ppf value =
     | Name runtime_name -> RuntimeName.pp ppf runtime_name
     | Constant c -> Constant.pp ppf c
     | Tuple vs ->
-        fprintf ppf "%a" (pp_print_comma_list pp_value) vs
+        fprintf ppf "%a" (pp_print_comma_list Var.pp) vs
     | Inject (name, vs) ->
-        fprintf ppf "%s(%a)" name (pp_print_comma_list pp_value) vs
+        fprintf ppf "%s(%a)" name (pp_print_comma_list Var.pp) vs
     | Lam { parameters; body; _ } ->
         fprintf ppf "fun(%a) {@,  @[<v>%a@]@,}"
             (pp_print_comma_list Binder.pp) parameters

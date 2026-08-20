@@ -13,50 +13,137 @@ let pp_varset ppf s =
 
 
 (* Let-insertion: ensures the subject of a Case, LetTuple, or function
-   application is always a bare variable, hoisting it into a fresh
-   let-binding otherwise. Required before reference counting / evaluation
-   in order to better support Perceus heap semantics. Also simplifies the pass. *)
-let bind_subject (comp : comp) (subject : value) (rest_fvs : varset) (rebuild : value -> comp_node) : comp =
-    match WithIrMetadata.node subject with
-        | Variable _ -> comp
+   application is always a bare variable, and that every argument of a
+   Tuple/Inject construction is a bare variable, hoisting non-variable
+   values into fresh let-bindings otherwise. Required before reference
+   counting / evaluation in order to better support Perceus heap semantics.
+
+   Since we can't insert a let-binder directly into a value, value-level
+   helpers below just return the auxiliary (binder, bound value) pairs
+   they need alongside the rewritten value/value list like we do with dups. *)
+let rec let_bind_value (v : value) : (Binder.t * value) list * value =
+    let get_new_fvs bindings =
+        VarSet.union
+            (get_fvs v)
+            (List.map (Var.of_binder << fst) bindings |> VarSet.of_list)
+    in
+    match WithIrMetadata.node v with
+        | VAnnotate (inner, ty) ->
+            let (bindings, inner') = let_bind_value inner in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (VAnnotate (inner', ty)))
+        | Tuple vs ->
+            let (bindings, vars) = force_variables vs in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (Tuple vars))
+        | Inject (s, vs) ->
+            let (bindings, vars) = force_variables vs in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (Inject (s, vars)))
+        | Lam lambda ->
+            ([], WithIrMetadata.make ~fvs:(get_fvs v) (Lam { lambda with body = let_insert lambda.body }))
+        | _ -> ([], v)
+
+(* Ensures [v] is a bare variable: first fixes up any nested Tuple/Inject content,
+   then binds the result itself if it isn't already a Variable. *)
+and force_variable (v : value) : (Binder.t * value) list * value =
+    let (bindings, v') = let_bind_value v in
+    match WithIrMetadata.node v' with
+        | Variable _ -> (bindings, v')
         | _ ->
             let binder = Binder.make () in
-            let var = Var.of_binder binder in
-            let var_val = WithIrMetadata.make ~fvs:(VarSet.singleton var) (Variable (var, None)) in
-            let term = WithIrMetadata.make ~fvs:(get_fvs subject) (Return subject) in
-            let cont = WithIrMetadata.make ~fvs:(VarSet.add var rest_fvs) (rebuild var_val) in
-            { comp with node = Let { binder; term; cont } }
+            let var_val =
+                WithIrMetadata.make ~fvs:(VarSet.singleton (Var.of_binder binder)) (Variable (Var.of_binder binder, None))
+            in
+            (bindings @ [ (binder, v') ], var_val)
 
-let let_insert : comp -> comp =
-    let visitor =
-        object
-            inherit [_] Ir.map as super
+and force_variables (vs : value list) : (Binder.t * value) list * value list =
+    List.fold_right
+        (fun v (bindings, vars) ->
+            let (v_bindings, var) = force_variable v in
+            (v_bindings @ bindings, var :: vars))
+        vs ([], [])
 
-            method! visit_comp env comp =
-                let comp = super#visit_comp env comp in
-                match WithIrMetadata.node comp with
-                    | App { func; args } ->
-                        let rest_fvs = List.fold_left (fun acc a -> VarSet.union acc (get_fvs a)) VarSet.empty args in
-                        bind_subject comp func rest_fvs (fun func -> App { func; args })
-                    | LetTuple { binders; tuple; cont } ->
-                        let bnd_vars = binders |> List.map (fun (b, _) -> Var.of_binder b) |> VarSet.of_list in
-                        let rest_fvs = VarSet.diff (get_fvs cont) bnd_vars in
-                        bind_subject comp tuple rest_fvs (fun tuple -> LetTuple { binders; tuple; cont })
-                    | Case { term; ty; branches } ->
-                        let rest_fvs =
-                            branches
-                            |> List.map (fun (params, body, _) ->
-                                let bound_vars = List.map Var.of_binder params |> VarSet.of_list in
-                                VarSet.diff (get_fvs body) bound_vars)
-                            |> VarSet.union_many
-                        in
-                        bind_subject comp term rest_fvs (fun term -> Case { term; ty; branches })
-                    | _ -> comp
+(* Like force_variables, but doesn't force each element to itself be a variable -
+   only fixes up any nested Tuple/Inject content (e.g. for App's args). *)
+and let_bind_value_list (vs : value list) : (Binder.t * value) list * value list =
+    List.fold_right
+        (fun v (bindings, vs') ->
+            let (v_bindings, v') = let_bind_value v in
+            (v_bindings @ bindings, v' :: vs'))
+        vs ([], [])
 
-            method visit_t _env x = x
-        end
-    in
-    visitor#visit_comp ()
+and insert_let_bindings (fvs : varset) (bindings : (Binder.t * value) list) (comp : comp) : comp =
+    List.fold_right
+        (fun (binder, term_value) cont ->
+            let term = WithIrMetadata.make ~fvs:(get_fvs term_value) (Return term_value) in
+            WithIrMetadata.make ~fvs (Let { binder; term; cont }))
+        bindings comp
+
+and fvs_with_bindings (comp : comp) (bindings : (Binder.t * value) list) : varset =
+    VarSet.union
+        (get_fvs comp)
+        (List.map (Var.of_binder << fst) bindings |> VarSet.of_list)
+
+and let_insert (comp : comp) : comp =
+    match WithIrMetadata.node comp with
+        | Annotate (c, ty) ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Annotate (let_insert c, ty))
+        | Let { binder; term; cont } ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Let { binder; term = let_insert term; cont = let_insert cont })
+        | Seq (e1, e2) ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Seq (let_insert e1, let_insert e2))
+        | Return v ->
+            let (bindings, v') = let_bind_value v in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings (WithIrMetadata.make ~fvs (Return v'))
+        | App { func; args } ->
+            let (func_bindings, func') = force_variable func in
+            let (args_bindings, args') = let_bind_value_list args in
+            let bindings = func_bindings @ args_bindings in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings (WithIrMetadata.make ~fvs (App { func = func'; args = args' }))
+        | If { test; then_expr; else_expr } ->
+            let (bindings, test') = let_bind_value test in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings
+                (WithIrMetadata.make ~fvs (If { test = test'; then_expr = let_insert then_expr; else_expr = let_insert else_expr }))
+        | LetTuple { binders; tuple; cont } ->
+            let (bindings, tuple') = force_variable tuple in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings
+                (WithIrMetadata.make ~fvs (LetTuple { binders; tuple = tuple'; cont = let_insert cont }))
+        | Case { term; ty; branches } ->
+            let (bindings, term') = force_variable term in
+            let branches' = List.map (fun (bnds, body, name) -> (bnds, let_insert body, name)) branches in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings (WithIrMetadata.make ~fvs (Case { term = term'; ty; branches = branches' }))
+        | New _ -> comp
+        | Spawn body ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Spawn (let_insert body))
+        | Send { target; message = (tag, vals); iname } ->
+            let (target_bindings, target') = let_bind_value target in
+            let (val_bindings, vals') = let_bind_value_list vals in
+            let bindings = target_bindings @ val_bindings in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings
+                (WithIrMetadata.make ~fvs (Send { target = target'; message = (tag, vals'); iname }))
+        | Free (v, iname) ->
+            let (bindings, v') = let_bind_value v in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings (WithIrMetadata.make ~fvs (Free (v', iname)))
+        | Guard { target; pattern; guards; iname } ->
+            let (bindings, target') = let_bind_value target in
+            let guards' = List.map let_insert_guard guards in
+            let fvs = fvs_with_bindings comp bindings in
+            insert_let_bindings fvs bindings
+                (WithIrMetadata.make ~fvs (Guard { target = target'; pattern; guards = guards'; iname }))
+
+and let_insert_guard (guard : guard) : guard =
+    match WithIrMetadata.node guard with
+        | Receive r -> WithIrMetadata.make ~fvs:(get_fvs guard) (Receive { r with cont = let_insert r.cont })
+        | Empty (b, c) -> WithIrMetadata.make ~fvs:(get_fvs guard) (Empty (b, let_insert c))
+        | Fail -> guard
 
 let unwrap_var = function
     | Variable (v, _) -> v
@@ -293,8 +380,9 @@ and insert_reference_counting_val decls borrowed owned value : VarMultiset.t * E
         | Primitive p -> (VarMultiset.empty, Evaluation_ir.Primitive p)
         | Name n -> (VarMultiset.empty, Evaluation_ir.Name n)
         | Inject (s, vs) ->
-            let (dups, vs') = transform_val_sequence decls borrowed owned vs in 
-            (dups, Evaluation_ir.Inject (s, vs'))
+            (* vs are guaranteed bare variables post let-insertion *)
+            let vars = List.map (fun v -> unwrap_var (WithIrMetadata.node v)) vs in
+            (VarMultiset.empty, Evaluation_ir.Inject (s, vars))
         | Variable (x, _) ->
             if VarSet.mem x owned || VarSet.mem x decl_vars then
               (* Owned or global declaration -- no dup needed *)
@@ -302,8 +390,9 @@ and insert_reference_counting_val decls borrowed owned value : VarMultiset.t * E
             else
               (VarMultiset.singleton x, Evaluation_ir.Variable x)
         | Tuple vs -> 
-            let (dups, vs') = transform_val_sequence decls borrowed owned vs in 
-            (dups, Evaluation_ir.Tuple vs')
+            (* vs are guaranteed bare variables post let-insertion *)
+            let vars = List.map (fun v -> unwrap_var (WithIrMetadata.node v)) vs in
+            (VarMultiset.empty, Evaluation_ir.Tuple vars)
         | Lam { linear = _; parameters; result_type = _; body } ->
             let fvs = get_fvs value in
             let body_fvs = get_fvs body in

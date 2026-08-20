@@ -231,21 +231,6 @@ and guard_node =
             "RuntimeName.map"; "Interface.map"; "Var.map"; "WithIrMetadata.map"];
         data = false }]
 
-let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
-    if List.is_empty dups then
-        comp
-    else
-        let fvs = WithIrMetadata.fvs comp in
-        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Dup dups), comp))
-
-let insert_drop ?(names = []) (drops : (Var.t * int) list) (comp : comp) : comp =
-    if List.is_empty drops && List.is_empty names then
-        comp
-    else
-        let fvs = WithIrMetadata.fvs comp in
-        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop { vars = drops; names }), comp))
-
-
 let normalise_seq comp =
     let right_nest_seq c =
         let rec mk_right_nested left right =

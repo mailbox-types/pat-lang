@@ -182,11 +182,11 @@ and comp_node =
         guards: guard list;
         iname: string option
       }
-        (* Reference counting instructions inserted after typechecking *)
-        | Drop of {
-                vars: ((Var.t[@name "var"]) * int) list;
-                names: ((RuntimeName.t[@name "runtime_name"]) * int) list
-            }
+    (* Reference counting instructions inserted after typechecking *)
+    | Drop of {
+            vars: ((Var.t[@name "var"]) * int) list;
+            names: ((RuntimeName.t[@name "runtime_name"]) * int) list
+        }
     | Dup of ((Var.t[@name "var"]) * int) list
 and value = (value_node WithIrMetadata.t [@name "withIR"])
 and lambda = {

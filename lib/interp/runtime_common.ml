@@ -19,10 +19,13 @@ module RuntimeValue = struct
     | Primitive of primitive_name
     | Name of RuntimeName.t
     | Tuple of t list
+    | Inject of (string * t list)
     | Closure of {
         lambda: lambda;
         value_env: value_env;
       }
+    (* An unresolved reference to a top-level declaration. *)
+    | Declaration of Var.t
 
   let rec of_ir value_env value =
     match WithIrMetadata.node value with
@@ -32,6 +35,7 @@ module RuntimeValue = struct
     | Ir.Primitive p -> Primitive p
     | Ir.Name n -> Name n
     | Ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
+    | Ir.Inject (s, vs) -> Inject (s, List.map (of_ir value_env) vs)
     | Ir.Lam lambda ->
       Closure { lambda; value_env }
     | Ir.Variable (v, _) ->
@@ -42,8 +46,6 @@ module RuntimeValue = struct
           runtime_error
             (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
       end
-    | Ir.Inject (_s, _vs) ->
-        runtime_error "Evaluating user-defined datatypes not yet supported"
 
   let rec to_ir runtime_value =
     match runtime_value with
@@ -57,8 +59,12 @@ module RuntimeValue = struct
       WithIrMetadata.make (Ir.Name n)
     | Tuple vs ->
       WithIrMetadata.make (Ir.Tuple (List.map to_ir vs))
+    | Inject (s, vs) ->
+      WithIrMetadata.make (Ir.Inject (s, List.map to_ir vs))
     | Closure { lambda; value_env = _ } ->
       WithIrMetadata.make (Ir.Lam lambda)
+    | Declaration var ->
+      WithIrMetadata.make (Ir.Variable (var, None))
 
   let pp ppf runtime_value =
     Ir.pp_value ppf (to_ir runtime_value)
@@ -67,6 +73,14 @@ end
 type value_env = RuntimeValue.value_env
 
 type runtime_message = (Ir.message_tag * RuntimeValue.t list)
+
+(* Only closures and tuples need to be reference counted (data constructors
+   are not yet representable as runtime values). *)
+let should_ref_count =
+  let open RuntimeValue in
+  function
+    | Closure _ | Tuple _ | Inject _ -> true
+    | _ -> false
 
 
 let rec find_empty_guard guards =

@@ -18,7 +18,6 @@ let mk_const c = WithIrMetadata.make (Constant c)
 let mk_name a = WithIrMetadata.make (Name a)
 
 let runtime_of_ir env value = RuntimeValue.of_ir env value
-let ir_of_runtime value = RuntimeValue.to_ir value
 
 type environment = value_env
 
@@ -34,7 +33,7 @@ type computation_frame =
   }
 
 type computation_state = {
-  program: Ir.program;
+  decls: decl VarMap.t;
   current_comp: comp;
   env: environment;
   stack: computation_frame list
@@ -50,22 +49,32 @@ let lookup_env env var =
   | None ->
     runtime_error (Format.asprintf "Unbound runtime variable %a" Var.pp var)
 
-let rec force_value env value =
-  match get_node value with
-  | VAnnotate (v, _) -> force_value env v
-  | Variable (var, _) -> force_value env (ir_of_runtime (lookup_env env var))
-  | _ -> value
+let decl_map program =
+  List.fold_left
+    (fun acc decl ->
+      let var = Var.of_binder decl.decl_name in
+      VarMap.add var decl acc)
+    VarMap.empty
+    program.prog_decls
 
-let rec normalise_function_value env value =
+(* Fully resolves a value to a closed runtime value, substituting any free variables from the
+   environment. An unbound variable referring to a top-level declaration resolves to a
+   [Declaration], rather than being an error. *)
+let rec force_value decls env value : RuntimeValue.t =
   match get_node value with
-  | VAnnotate (v, _) -> normalise_function_value env v
+  | VAnnotate (v, _) -> force_value decls env v
   | Variable (var, _) ->
     begin
       match VarMap.find_opt var env with
-      | Some bound -> ir_of_runtime bound
-      | None -> value
+      | Some bound -> bound
+      | None ->
+        begin
+          match VarMap.find_opt var decls with
+          | Some _ -> RuntimeValue.Declaration var
+          | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
+        end
     end
-  | _ -> value
+  | _ -> RuntimeValue.of_ir env value
 
 let runtime_name_of_value env value =
   match RuntimeValue.of_ir env value with
@@ -87,17 +96,8 @@ let lookup_runtime_names env vars =
       | Some name -> Some (name, count))
     vars
 
-let decl_map program =
-  List.fold_left
-    (fun acc decl ->
-      let var = Var.of_binder decl.decl_name in
-      VarMap.add var decl acc)
-    VarMap.empty
-    program.prog_decls
-
-
 let init_state program comp =
-  { program; current_comp = comp; env = VarMap.empty; stack = [] }
+  { decls = decl_map program; current_comp = comp; env = VarMap.empty; stack = [] }
 
 let install_seq_frame saved_env next_comp state =
   { state with stack = SeqFrame { saved_env; next_comp } :: state.stack }
@@ -105,26 +105,25 @@ let install_seq_frame saved_env next_comp state =
 let install_let_frame binder saved_env next_comp state =
   { state with stack = LetFrame { binder; saved_env; next_comp } :: state.stack }
 
+(* If the returned expression is a closure, tuple, or data constructor, then we
+   need to reference count it and return a runtime name. *)
 let handle_return runtime state value =
   (* We can only store a closed runtime value in the environment, so we need to substitute any FVs. *)
-  let forced = force_value state.env value in
-  let irv = runtime_of_ir state.env value in
-  match (get_node forced, state.stack) with
-    | (_, []) -> Finished
-    | (_, SeqFrame { saved_env; next_comp } :: other_frames) ->
-      Stepped { state with current_comp = next_comp; env = saved_env; stack = other_frames }
-    | (Lam _, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
-      (* If we're returning a function or constructor, we need to generate a new 
-          function runtime name, store in the reference counted heap,
-          and return this instead of the lambda binding. *)
-      let new_ref = Runtime.record_value runtime irv in
-      let env' =
-        VarMap.add binder (RuntimeValue.Name new_ref) saved_env
-      in
-      Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
-    | (_, LetFrame { binder; saved_env; next_comp } :: other_frames) ->
-      let env' = VarMap.add binder irv saved_env in
-      Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
+  let forced = force_value state.decls state.env value in
+  match state.stack with
+    | [] -> Finished
+    | SeqFrame { saved_env; next_comp } :: other_frames ->
+        Stepped { state with current_comp = next_comp; env = saved_env; stack = other_frames }
+    | LetFrame { binder; saved_env; next_comp } :: other_frames ->
+      if Runtime_common.should_ref_count forced then
+        let new_ref = Runtime.record_value runtime forced in
+        let env' =
+          VarMap.add binder (RuntimeValue.Name new_ref) saved_env
+        in
+        Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
+      else
+        let env' = VarMap.add binder forced saved_env in
+        Stepped { state with current_comp = next_comp; env = env'; stack = other_frames }
 
 let rec bind_many binders values env =
   match binders, values with
@@ -144,45 +143,40 @@ let rec bind_many_rt binders values env =
 let bind binder value env =
   VarMap.add (Var.of_binder binder) (runtime_of_ir env value) env
 
-let bool_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Constant (Constant.Bool b) -> b
-  | _ ->
+let bool_of_value decls env value =
+  match force_value decls env value with
+  | RuntimeValue.Constant (Constant.Bool b) -> b
+  | forced ->
     runtime_error
-      (Format.asprintf "Expected boolean test value, got: %a" pp_value forced)
+      (Format.asprintf "Expected boolean test value, got: %a" RuntimeValue.pp forced)
 
-let tuple_values_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Tuple values -> values
-  | _ ->
+let tuple_values_of_value decls env value =
+  match force_value decls env value with
+  | RuntimeValue.Tuple values -> values
+  | forced ->
     runtime_error
-      (Format.asprintf "Expected tuple value, got: %a" pp_value forced)
+      (Format.asprintf "Expected tuple value, got: %a" RuntimeValue.pp forced)
 
-let int_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Constant (Constant.Int i) -> i
+let int_of_value value =
+  match value with
+  | RuntimeValue.Constant (Constant.Int i) -> i
   | _ ->
     runtime_error
-      (Format.asprintf "Expected integer value, got: %a" pp_value forced)
+      (Format.asprintf "Expected integer value, got: %a" RuntimeValue.pp value)
 
-let string_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Constant (Constant.String s) -> s
+let string_of_value value =
+  match value with
+  | RuntimeValue.Constant (Constant.String s) -> s
   | _ ->
     runtime_error
-      (Format.asprintf "Expected string value, got: %a" pp_value forced)
+      (Format.asprintf "Expected string value, got: %a" RuntimeValue.pp value)
 
-let bool_runtime_of_value env value =
-  let forced = force_value env value in
-  match get_node forced with
-  | Constant (Constant.Bool b) -> b
+let bool_runtime_of_value value =
+  match value with
+  | RuntimeValue.Constant (Constant.Bool b) -> b
   | _ ->
     runtime_error
-      (Format.asprintf "Expected boolean value, got: %a" pp_value forced)
+      (Format.asprintf "Expected boolean value, got: %a" RuntimeValue.pp value)
 
 let expect_arity prim expected args =
   let actual = List.length args in
@@ -199,27 +193,27 @@ let bool_const b =
 let string_const s =
   mk_const (Constant.String s)
 
-let apply_primitive runtime prim env args =
+let apply_primitive runtime prim args =
   match prim with
   | "+" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const (int_of_value env x + int_of_value env y)
+      | [x; y] -> int_const (int_of_value x + int_of_value y)
       | _ -> assert false
     end
   | "-" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const (int_of_value env x - int_of_value env y)
+      | [x; y] -> int_const (int_of_value x - int_of_value y)
       | _ -> assert false
     end
   | "*" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> int_const (int_of_value env x * int_of_value env y)
+      | [x; y] -> int_const (int_of_value x * int_of_value y)
       | _ -> assert false
     end
   | "/" ->
@@ -227,65 +221,65 @@ let apply_primitive runtime prim env args =
     begin
       match args with
       | [x; y] ->
-        let denom = int_of_value env y in
+        let denom = int_of_value y in
         if denom = 0 then runtime_error "Division by zero in primitive '/'";
-        int_const (int_of_value env x / denom)
+        int_const (int_of_value x / denom)
       | _ -> assert false
     end
   | "<" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x < int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x < int_of_value y)
       | _ -> assert false
     end
   | "<=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x <= int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x <= int_of_value y)
       | _ -> assert false
     end
   | ">" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x > int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x > int_of_value y)
       | _ -> assert false
     end
   | ">=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x >= int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x >= int_of_value y)
       | _ -> assert false
     end
   | "==" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x = int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x = int_of_value y)
       | _ -> assert false
     end
   | "!=" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (int_of_value env x <> int_of_value env y)
+      | [x; y] -> bool_const (int_of_value x <> int_of_value y)
       | _ -> assert false
     end
   | "&&" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (bool_runtime_of_value env x && bool_runtime_of_value env y)
+      | [x; y] -> bool_const (bool_runtime_of_value x && bool_runtime_of_value y)
       | _ -> assert false
     end
   | "||" ->
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> bool_const (bool_runtime_of_value env x || bool_runtime_of_value env y)
+      | [x; y] -> bool_const (bool_runtime_of_value x || bool_runtime_of_value y)
       | _ -> assert false
     end
   | "print" ->
@@ -293,7 +287,7 @@ let apply_primitive runtime prim env args =
     begin
       match args with
       | [x] ->
-        print_endline (string_of_value env x);
+        print_endline (string_of_value x);
         unit_value
       | _ -> assert false
     end
@@ -301,7 +295,7 @@ let apply_primitive runtime prim env args =
     expect_arity prim 2 args;
     begin
       match args with
-      | [x; y] -> string_const (string_of_value env x ^ string_of_value env y)
+      | [x; y] -> string_const (string_of_value x ^ string_of_value y)
       | _ -> assert false
     end
   | "rand" ->
@@ -309,7 +303,7 @@ let apply_primitive runtime prim env args =
     begin
       match args with
       | [x] ->
-        let bound = int_of_value env x in
+        let bound = int_of_value x in
         if bound <= 0 then runtime_error "Primitive 'rand' expects a positive integer bound";
         int_const (Random.int bound)
       | _ -> assert false
@@ -322,7 +316,7 @@ let apply_primitive runtime prim env args =
     begin
       match args with
       | [x] ->
-        let duration = int_of_value env x in
+        let duration = int_of_value x in
         if duration <= 0 then runtime_error "Primitive 'sleep' expects a positive integer duration";
         Runtime.sleep runtime duration;
         unit_value
@@ -333,7 +327,7 @@ let apply_primitive runtime prim env args =
     expect_arity prim 1 args;
     begin
       match args with
-      | [x] -> string_const (string_of_int (int_of_value env x))
+      | [x] -> string_const (string_of_int (int_of_value x))
       | _ -> assert false
     end
   | _ ->
@@ -374,28 +368,30 @@ let rec step_current runtime state =
     (* App: Check whether applying a primitive or variable. If a primitive, handle separately.
         If a variable, looks up in declarations; if a primitive, handles directly *)
     | App { func; args } ->
-      let func = normalise_function_value state.env func in
-      let args = List.map (force_value state.env) args in
+      let func = force_value state.decls state.env func in
+      let args = List.map (force_value state.decls state.env) args in
       begin
-        match get_node func with
+        let open RuntimeValue in
+        match func with
         | Primitive prim ->
-          let result = apply_primitive runtime prim state.env args in
+          let result = apply_primitive runtime prim args in
           finish_current { state with current_comp = with_val_fvs result (Return result) }
-        | Variable (var, _) ->
-          let decls = decl_map state.program in
+        | Declaration var ->
           begin
-            match VarMap.find_opt var decls with
-            | None -> runtime_error "Attempted to call unknown declaration"
+            match VarMap.find_opt var state.decls with
+            | None ->
+              runtime_error
+                (Format.asprintf "Attempted to call unknown declaration %a" Var.pp var)
             | Some decl ->
               let binders = List.map fst decl.decl_parameters in
-              let call_env = bind_many binders args VarMap.empty in
+              let call_env = bind_many_rt binders args VarMap.empty in
               finish_current { state with current_comp = decl.decl_body; env = call_env }
           end
         (* Applying a function literal. We don't need to heap-allocate this, or do anything
             special with closures, as it can't be re-called. *)
-        | Lam lambda ->
+        | Closure { lambda; value_env } ->
             let binders = List.map fst lambda.parameters in
-            let extended_env = bind_many binders args state.env in
+            let extended_env = bind_many_rt binders args value_env in
             finish_current { state with current_comp = lambda.body; env = extended_env  }
         (* We've previously bound the function. Need to dup its FVs, drop a
           ref, extend the env with param -> arg mappings, and eval body *) 
@@ -403,7 +399,7 @@ let rec step_current runtime state =
           let (lambda, fvs, closure_env) = Runtime.lookup_lambda runtime name in
           let dup_cmd = WithIrMetadata.make (Ir.Dup (List.map (fun n -> (n, 1)) (VarSet.elements fvs))) in
           let drop_cmd = WithIrMetadata.make (Ir.Drop { vars = []; names = [ (name, 1) ] }) in
-          let extended_env = bind_many (List.map fst lambda.parameters) args closure_env in
+          let extended_env = bind_many_rt (List.map fst lambda.parameters) args closure_env in
           let new_stack =
             SeqFrame { saved_env = state.env; next_comp = drop_cmd }
             :: SeqFrame { saved_env = extended_env; next_comp = lambda.body }
@@ -414,19 +410,19 @@ let rec step_current runtime state =
           runtime_error
             (Format.asprintf
               "Function position must be a declaration, lambda, or primitive, but got %a"
-              Ir.pp_value_node other)
+              RuntimeValue.pp other)
       end
     | If { test; then_expr; else_expr } ->
-      if bool_of_value state.env test then
+      if bool_of_value state.decls state.env test then
         finish_current { state with current_comp = then_expr }
       else
         finish_current { state with current_comp = else_expr }
     | LetTuple { binders; tuple; cont } ->
-      let tuple_values = tuple_values_of_value state.env tuple in
+      let tuple_values = tuple_values_of_value state.decls state.env tuple in
       let tuple_binders = List.map fst binders in
       if List.length tuple_binders <> List.length tuple_values then
         runtime_error "Tuple arity mismatch in let-tuple";
-      let env' = bind_many tuple_binders tuple_values state.env in
+      let env' = bind_many_rt tuple_binders tuple_values state.env in
       finish_current { state with current_comp = cont; env = env' }
     | Case _ ->
       runtime_error "Evaluating case-expressions not yet implemented"
@@ -489,7 +485,7 @@ let rec step_current runtime state =
     | Spawn comp ->
       Runtime.spawn runtime
         (fun () -> 
-          let st = { program = state.program; current_comp = comp;
+          let st = { decls = state.decls; current_comp = comp;
                      env = state.env; stack = [] } in
           step runtime st);
       return_unit state

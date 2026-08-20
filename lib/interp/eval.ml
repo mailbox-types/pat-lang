@@ -397,15 +397,11 @@ let rec step_current runtime state =
           ref, extend the env with param -> arg mappings, and eval body *) 
         | Name name ->
           let (lambda, fvs, closure_env) = Runtime.lookup_lambda runtime name in
-          let dup_cmd = WithIrMetadata.make (Ir.Dup (List.map (fun n -> (n, 1)) (VarSet.elements fvs))) in
-          let drop_cmd = WithIrMetadata.make (Ir.Drop { vars = []; names = [ (name, 1) ] }) in
+          let dup_names = lookup_runtime_names state.env (List.map (fun n -> (n, 1)) (VarSet.elements fvs)) in
+          Runtime.dup runtime dup_names;
+          Runtime.drop runtime [ (name, 1) ];
           let extended_env = bind_many_rt (List.map fst lambda.parameters) args closure_env in
-          let new_stack =
-            SeqFrame { saved_env = state.env; next_comp = drop_cmd }
-            :: SeqFrame { saved_env = extended_env; next_comp = lambda.body }
-            :: state.stack
-          in
-          finish_current { state with current_comp = dup_cmd; stack = new_stack }
+          finish_current { state with current_comp = lambda.body; env = extended_env }
         | other ->
           runtime_error
             (Format.asprintf
@@ -441,14 +437,7 @@ let rec step_current runtime state =
           (Format.asprintf "Expected sum value for case analysis, got: %a" pp_value (force_value state.env term))
       end
       *)
-    | Dup vars ->
-      let names = lookup_runtime_names state.env vars in
-      Runtime.dup runtime names;
-      return_unit state
-    | Drop { vars; names } ->
-      let var_names = lookup_runtime_names state.env vars in
-      Runtime.drop runtime (var_names @ names);
-      return_unit state
+
     | New _ -> return state (WithIrMetadata.make <| Ir.Name (Runtime.new_mailbox runtime))
     | Send { target; message = (tag, payloads); iname = _ } ->
       let mb_name = runtime_name_of_value state.env target in

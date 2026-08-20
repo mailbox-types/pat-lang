@@ -128,8 +128,8 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
               intersection of the current owned environment and the free variables of the subexpression.
               Then in the body, drop everything that is in the owned environment but not the current environment.
               Borrowed environment is just the current borrowed environment. *)
-        (* The 'match' schema in the Perceus paper rather unhelpfully has a variable literal as the scrutinee.
-           However this isn't too big a deal -- drops will ensure same FVs in each branch. Then we can just
+        (* The 'match' schema in the Perceus paper has a variable literal as the scrutinee.
+           'If' is a specialisation of that rule. Drops will ensure same FVs in each branch. Then we can just
             say that the borrowed environment for the test is the union of the borrowed env and the owned env of the branches. *)
         | If { test; then_expr; else_expr } ->
             let branches_owned = VarSet.inter owned
@@ -241,11 +241,6 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
             let translated_guards = List.map (ircg borrowed guards_owned) guards in
             insert_dup dups
                 (Evaluation_ir.Guard { target = translated_target; pattern; guards = translated_guards; iname = Option.get iname })
-        | Drop _
-        | Dup _ -> raise <| 
-            Errors.internal_error
-                "reference_counting.ml"
-                "Reference counting pass should not see Drop or Dup nodes"
 (* Helper function to annotate an ordered sequence of values. We need to consider all subsequent
     variables used in a sequence as borrowed. The best way of doing this is to reverse the
     list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)

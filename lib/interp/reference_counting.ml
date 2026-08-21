@@ -303,18 +303,26 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
         | New interface ->
             Evaluation_ir.New interface
         | Spawn e ->
-            (* We need any reference counting that's done inside the expression
-               to happen in the parent thread, **not** the spawned thread. Otherwise we end up
-               with a concurrency bug: required duplications will be deferred until the 
-               spawned thread is scheduled. By hoisting any duplications to the parent thread we
-               ensure the continuation is evaluated in a consistent state regardless of scheduling. *)
-            let counted_body = irc borrowed owned e in
-            begin
-                match counted_body with
-                    | Evaluation_ir.Seq ((Evaluation_ir.Dup _ as dup_node), e2) ->
-                        Evaluation_ir.Seq (dup_node, Evaluation_ir.Spawn e2)
-                    | _ -> Evaluation_ir.Spawn counted_body
-            end
+            (* Any duplication the spawned body needs from the enclosing scope has to
+               happen in the parent thread, **not** the spawned thread. Otherwise we end
+               up with a concurrency bug: the duplication is deferred until the spawned
+               thread is first scheduled, and the parent may consume its own reference
+               before that happens.
+
+               Rather than trying to spot dups in the translated body (which only works
+               when one lands at the very front of it), we transfer ownership up-front:
+               everything the body uses that we borrow is dup'd here, and the body
+               is then translated with those variables owned, so it generates no dups for
+               them itself. *)
+            let body_fvs = get_fvs e in
+            let transferred = VarSet.inter borrowed body_fvs in
+            (* Owned variables are moved into the body wholesale; the invariant on [owned]
+               guarantees they are all free in it. *)
+            let body_owned = VarSet.union owned transferred in
+            let body_borrowed = VarSet.diff borrowed transferred in
+            let counted_body = irc body_borrowed body_owned e in
+            let dups = VarSet.elements transferred |> List.map (fun v -> (v, 1)) in
+            insert_dup dups (Evaluation_ir.Spawn counted_body)
         | Send { target; message = (tag, message_values); iname } -> 
             begin
                 match transform_val_sequence decls borrowed owned (target :: message_values) with

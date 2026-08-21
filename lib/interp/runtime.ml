@@ -195,10 +195,12 @@ let send (runtime : t) (runtime_name : RuntimeName.t) (message : Runtime_common.
       (Format.asprintf "Send target mailbox %a does not exist" RuntimeName.pp runtime_name)
   | Some (refcount, messages) ->
     let next_refcount = refcount - 1 in
-    if next_refcount < 1 then
-      runtime_error
-        (Format.asprintf "Mailbox %a reference count became < 1 after send: %a"
-          RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages));
+    let () =
+      if next_refcount < 1 then
+        runtime_error
+          (Format.asprintf "Mailbox %a reference count became < 1 after send: %a"
+            RuntimeName.pp runtime_name pp_mailbox_entry (refcount, messages))
+    in
     Hashtbl.replace runtime.mailboxes runtime_name (next_refcount, messages @ [message]);
     begin
       match Hashtbl.find_opt runtime.blocked runtime_name with

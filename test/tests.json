@@ -660,6 +660,13 @@
                     "stderr": ""
                 },
                 {
+                    "name": "spawn-dup-hoist",
+                    "filename": "pat-tests/spawn-dup-hoist.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
                     "name": "sum-1",
                     "filename": "pat-tests/sum-1.pat",
                     "exit_code": 0,

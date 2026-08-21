@@ -15,7 +15,7 @@ def actor(self: ActorMb?): Unit {
     free ->
       print("freed")
     receive Packet() from self ->
-      let dummy = fact(rand(100000)) in
+      let dummy = fact(rand(10)) in
       actor(self)
   }
 }
@@ -55,7 +55,8 @@ def main(): Unit {
   spawn { actor(actorMb3) };
 
   flood(100, actorMb1);
-  flood(1000, actorMb1)
+  flood(100, actorMb2);
+  flood(100, actorMb3)
 }
 
 main()

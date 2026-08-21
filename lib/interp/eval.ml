@@ -456,8 +456,7 @@ let rec step_current runtime state =
           | _ -> None
           ) tuple_values
         in
-        let dup_names = count_names names_in_values in
-        Runtime.dup runtime dup_names;
+        Runtime.dup runtime (count_names names_in_values);
         Runtime.drop runtime [ (tuple_name, 1) ];
         if List.length binders <> List.length tuple_values then
           runtime_error "Tuple arity mismatch in let-tuple";
@@ -471,8 +470,7 @@ let rec step_current runtime state =
           | _ -> None
           ) arguments
         in
-        let dup_names = count_names names_in_args in
-        Runtime.dup runtime dup_names;
+        Runtime.dup runtime (count_names names_in_args);
         Runtime.drop runtime [ (scrutinee_name, 1) ];
         begin
             match List.find_opt (fun (_, _, name) -> String.equal name constructor) branches with

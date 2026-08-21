@@ -6,14 +6,6 @@ open Runtime_common
 let max_steps_before_yield = 20
 
 module VarMap = Runtime_common.VarMap
-module RuntimeNameMap = Map.Make(RuntimeName)
-
-let count_names names =
-  List.fold_left
-    (fun acc n -> RuntimeNameMap.update n (function Some c -> Some (c + 1) | None -> Some 1) acc)
-    RuntimeNameMap.empty names
-  |> RuntimeNameMap.bindings
-
 let unit_value = Tuple []
 let mk_const c = Constant c
 let mk_name a = Name a
@@ -84,10 +76,15 @@ let runtime_name_of_value env value =
     runtime_error
       (Format.asprintf "Expected a mailbox runtime name value, got: %a" RuntimeValue.pp v)
 
-let runtime_name_of_runtime_value value =
-  match value with
-  | RuntimeValue.Name runtime_name -> Some runtime_name
-  | _ -> None
+let unwrap_runtime_name = function
+  | RuntimeValue.Name runtime_name -> runtime_name
+  | v ->
+    runtime_error
+      (Format.asprintf "Expected a mailbox runtime name value, got: %a" RuntimeValue.pp v)
+
+let force_runtime_name env var =
+  force_var VarMap.empty env var |> unwrap_runtime_name
+
 
 let runtime_name_of_var env var =
   match VarMap.find_opt var env with
@@ -96,15 +93,20 @@ let runtime_name_of_var env var =
   | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
 
 
-let lookup_runtime_names env vars =
-  List.filter_map
-    (fun (var, count) ->
-      match lookup_env env var |> runtime_name_of_runtime_value with
-      | None -> None
-      | Some name -> Some (name, count))
-    vars
-  
-let lookup_runtime_name env n = lookup_env env n |> runtime_name_of_runtime_value
+let lookup_runtime_names env var =
+  List.concat_map
+    (fun var ->
+      lookup_env env var |> runtime_names_in_runtime_value) var
+  |> count_names
+
+(* Like lookup_runtime_names, but aggregates count, used for Dup/Drop *)
+let lookup_weighted_runtime_names env vars =
+  vars
+  |> List.concat_map (fun (var, count) ->
+      lookup_env env var
+      |> runtime_names_in_runtime_value
+      |> List.concat_map (fun name -> List.init count (fun _ -> name)))
+  |> count_names
 
 (* Looks up the definition, free variable set, and stored environment of a closure. *)
 let lookup_lambda runtime name =
@@ -403,7 +405,9 @@ let rec step_current runtime state =
     (* App: Check whether applying a primitive or variable. If a primitive, handle separately.
         If a variable, looks up in declarations; if a primitive, handles directly *)
     | App { func; args } ->
-      let args = List.map (force_value state.decls state.env) args in
+      (* args are bare variables post let-insertion; force_var (rather than a plain env
+         lookup) so a top-level function passed by name still resolves to a Declaration. *)
+      let args = List.map (force_var state.decls state.env) args in
       begin
         let open RuntimeValue in
         (* We will never map the function variable directly to a closure as this
@@ -428,7 +432,7 @@ let rec step_current runtime state =
               ref, extend the env with param -> arg mappings, and eval body *) 
             | Name name ->
               let (lambda, fvs, closure_env) = lookup_lambda runtime name in
-              let dup_names = lookup_runtime_names state.env (List.map (fun n -> (n, 1)) (VarSet.elements fvs)) in
+              let dup_names = lookup_runtime_names state.env (VarSet.elements fvs) in
               Runtime.dup runtime dup_names;
               Runtime.drop runtime [ (name, 1) ];
               let extended_env = bind_many_rt lambda.parameters args closure_env in
@@ -451,11 +455,7 @@ let rec step_current runtime state =
     | LetTuple { binders; tuple; cont } ->
       let tuple_name = runtime_name_of_var state.env tuple in
       let tuple_values = lookup_tuple runtime tuple_name in
-      let names_in_values = List.filter_map (function
-          | RuntimeValue.Name n -> Some n
-          | _ -> None
-          ) tuple_values
-        in
+      let names_in_values = List.concat_map runtime_names_in_runtime_value tuple_values in
         Runtime.dup runtime (count_names names_in_values);
         Runtime.drop runtime [ (tuple_name, 1) ];
         if List.length binders <> List.length tuple_values then
@@ -465,11 +465,7 @@ let rec step_current runtime state =
     | Case { scrutinee; branches; _ } ->
         let scrutinee_name = runtime_name_of_var state.env scrutinee in
         let (constructor, arguments) = lookup_constructor runtime scrutinee_name in
-        let names_in_args = List.filter_map (function
-          | RuntimeValue.Name n -> Some n
-          | _ -> None
-          ) arguments
-        in
+        let names_in_args = List.concat_map runtime_names_in_runtime_value arguments in
         Runtime.dup runtime (count_names names_in_args);
         Runtime.drop runtime [ (scrutinee_name, 1) ];
         begin
@@ -486,7 +482,9 @@ let rec step_current runtime state =
     | New _ -> return state (Name (Runtime.new_mailbox runtime))
     | Send { target; message = (tag, payloads); iname = _ } ->
       let mb_name = runtime_name_of_value state.env target in
-      let runtime_message = (tag, List.map (RuntimeValue.of_ir state.env) payloads) in
+      (* Payloads are bare variables post let-insertion; resolving them yields the tracked
+         runtime name for any heap value, which is what gets stored in the mailbox. *)
+      let runtime_message = (tag, List.map (force_var state.decls state.env) payloads) in
       Runtime.send runtime mb_name runtime_message;
       return_unit state
     | Guard { target; guards; _ } ->
@@ -517,11 +515,11 @@ let rec step_current runtime state =
       Runtime.free_mailbox runtime rt_name;
       return_unit state
     | Dup vars ->
-      let names = lookup_runtime_names state.env vars in
+      let names = lookup_weighted_runtime_names state.env vars in
       Runtime.dup runtime names;
       return_unit state
     | Drop { vars; names } ->
-      let var_names = lookup_runtime_names state.env vars in
+      let var_names = lookup_weighted_runtime_names state.env vars in
       Runtime.drop runtime (var_names @ names);
       return_unit state
     | Spawn comp ->

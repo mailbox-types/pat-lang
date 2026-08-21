@@ -3,7 +3,13 @@ open Common_types
 open Evaluation_ir
 
 module VarMap = Map.Make(Var)
-module RuntimeMap = Map.Make(RuntimeName)
+module RuntimeNameMap = Map.Make(RuntimeName)
+
+let count_names names =
+  List.fold_left
+    (fun acc n -> RuntimeNameMap.update n (function Some c -> Some (c + 1) | None -> Some 1) acc)
+    RuntimeNameMap.empty names
+  |> RuntimeNameMap.bindings
 
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
@@ -62,6 +68,16 @@ end
 type value_env = RuntimeValue.value_env
 
 type runtime_message = (message_tag * RuntimeValue.t list)
+
+(* All runtime names reachable from a value, descending through any nesting of
+   Tuple/Inject (e.g. a mailbox stored inside a variant stored inside a tuple). *)
+let rec runtime_names_in_runtime_value value =
+  let open RuntimeValue in
+  match value with
+  | Name runtime_name -> [runtime_name]
+  | Tuple vs
+  | Inject (_, vs) -> List.concat_map runtime_names_in_runtime_value vs
+  | Atom _ | Constant _ | Primitive _ | Closure _ | Declaration _ -> []
 
 let should_ref_count =
   let open RuntimeValue in

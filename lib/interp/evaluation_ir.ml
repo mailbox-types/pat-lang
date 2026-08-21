@@ -36,7 +36,7 @@ and comp =
     | Return of value
     | App of {
         func: function_target;
-        args: value list
+        args: Var.t list
       }
     | If of { test: value; then_expr: comp; else_expr: comp }
     | LetTuple of {
@@ -86,7 +86,7 @@ and lambda = {
     body: comp
 }
 and message_tag = string
-and message = (message_tag * value list)
+and message = (message_tag * Var.t list)
 and primitive_name = string
 and atom_name = string
 and constant = Constant.t
@@ -114,7 +114,7 @@ and pp_decl ppf { decl_name; decl_parameters; decl_body } =
 and pp_message ppf (tag, vs) =
     fprintf ppf "%s(%a)"
         tag
-        (pp_print_comma_list pp_value) vs
+        (pp_print_comma_list Var.pp) vs
 and pp_branch name ppf (bnds, c) =
     fprintf ppf "%s(%a) -> @[<v>%a@]"
         name
@@ -138,7 +138,7 @@ and pp_comp ppf comp =
         in
         fprintf ppf "%s(%a)"
             f_name
-            (pp_print_comma_list pp_value) args
+            (pp_print_comma_list Var.pp) args
     | If { test; then_expr; else_expr } ->
         fprintf ppf "if (%a) {@[<v>%a@]} else {@[<v>%a@]}}"
             pp_value test

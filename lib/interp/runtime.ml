@@ -112,19 +112,18 @@ and update_value_refcount runtime name count sign =
           let fv_runtime_names =
             lambda.fvs
             |> VarSet.elements
-            |> List.filter_map (fun fv ->
+            |> List.concat_map (fun fv ->
                 match VarMap.find_opt fv value_env with
-                | Some (RuntimeValue.Name runtime_name) -> Some (runtime_name, 1)
-                | _ -> None)
+                | Some v -> runtime_names_in_runtime_value v
+                | None -> [])
+            |> count_names
           in
           let to_wake = apply_refcount_delta runtime fv_runtime_names (-1) in
           wake_blocked_many runtime to_wake
         | RuntimeValue.Tuple ts | RuntimeValue.Inject (_, ts) ->
           let contained_names =
-            List.filter_map (function
-              | RuntimeValue.Name runtime_name -> Some (runtime_name, 1)
-              | _ -> None)
-              ts
+            List.concat_map runtime_names_in_runtime_value ts
+            |> count_names
           in
           let to_wake = apply_refcount_delta runtime contained_names (-1) in
           wake_blocked_many runtime to_wake

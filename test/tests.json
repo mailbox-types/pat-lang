@@ -735,6 +735,38 @@
                     "exit_code": 0,
                     "stdout": "6\nHello!\n",
                     "stderr": ""
+                },
+                {
+                    "name": "tuple-counting",
+                    "filename": "pat-tests/tuple-counting.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": "",
+                    "args": [
+                        "-q",
+                        "-j"
+                    ]
+                },
+                {
+                    "name": "heap-arg-ctor",
+                    "filename": "pat-tests/heap-arg-ctor.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "heap-payload-ctor",
+                    "filename": "pat-tests/heap-payload-ctor.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "heap-arg-lambda",
+                    "filename": "pat-tests/heap-arg-lambda.pat",
+                    "exit_code": 0,
+                    "stdout": "6\n",
+                    "stderr": ""
                 }
             ]
         },

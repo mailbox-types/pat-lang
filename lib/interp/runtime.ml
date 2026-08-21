@@ -119,6 +119,15 @@ and update_value_refcount runtime name count sign =
           in
           let to_wake = apply_refcount_delta runtime fv_runtime_names (-1) in
           wake_blocked_many runtime to_wake
+        | RuntimeValue.Tuple ts | RuntimeValue.Inject (_, ts) ->
+          let contained_names =
+            List.filter_map (function
+              | RuntimeValue.Name runtime_name -> Some (runtime_name, 1)
+              | _ -> None)
+              ts
+          in
+          let to_wake = apply_refcount_delta runtime contained_names (-1) in
+          wake_blocked_many runtime to_wake
         | _ -> ()
       end
     else

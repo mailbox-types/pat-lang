@@ -693,6 +693,48 @@
                     "exit_code": 0,
                     "stdout": "Ignoring 1!\nIgnored 1!\nIgnoring 2!\nIgnored 2!\nFreed!\n",
                     "stderr": ""
+                },
+                {
+                    "name": "data-1",
+                    "filename": "pat-tests/data-1.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n0\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-2",
+                    "filename": "pat-tests/data-2.pat",
+                    "exit_code": 0,
+                    "stdout": "3\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-3",
+                    "filename": "pat-tests/data-3.pat",
+                    "exit_code": 0,
+                    "stdout": "1\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-4",
+                    "filename": "pat-tests/data-4.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-expr",
+                    "filename": "pat-tests/data-expr.pat",
+                    "exit_code": 0,
+                    "stdout": "20\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-mixed",
+                    "filename": "pat-tests/data-mixed.pat",
+                    "exit_code": 0,
+                    "stdout": "6\nHello!\n",
+                    "stderr": ""
                 }
             ]
         },

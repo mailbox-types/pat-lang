@@ -251,6 +251,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
         | LetTuple { binders; tuple; cont } ->
             (* tuple is guaranteed a bare variable post let-insertion *)
             let tuple_var = unwrap_var (WithIrMetadata.node tuple) in
+            let owned = VarSet.diff owned (VarSet.singleton tuple_var) in
             let cont_fvs = get_fvs cont in
             let binders_set = 
                 binders
@@ -269,6 +270,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
             Evaluation_ir.LetTuple { binders = List.map fst binders; tuple = tuple_var; cont = final_translated_cont }
         | Case { term; branches; _ } ->
             let var = unwrap_var (WithIrMetadata.node term) in
+            let owned = VarSet.diff owned (VarSet.singleton var) in
             let mk_drop vars transformed_comp =
                 let var_list =
                     VarSet.elements vars

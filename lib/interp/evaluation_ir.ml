@@ -23,6 +23,9 @@ and decl = {
     decl_parameters: Binder.t list;
     decl_body: comp
 }
+and function_target =
+    | PrimitiveFunction of string
+    | UserFunction of Var.t
 and comp =
     | Let of {
         binder: Binder.t;
@@ -32,7 +35,7 @@ and comp =
     | Seq of (comp * comp)
     | Return of value
     | App of {
-        func: Var.t;
+        func: function_target;
         args: value list
       }
     | If of { test: value; then_expr: comp; else_expr: comp }
@@ -128,8 +131,13 @@ and pp_comp ppf comp =
         fprintf ppf "(%a;@,%a)" pp_comp c1 pp_comp c2
     | Return v -> pp_value ppf v
     | App { func; args } ->
-        fprintf ppf "%a(%a)"
-            Var.pp func
+        let f_name =
+            match func with
+                | PrimitiveFunction f -> f
+                | UserFunction v -> Format.asprintf "%a" Var.pp v
+        in
+        fprintf ppf "%s(%a)"
+            f_name
             (pp_print_comma_list pp_value) args
     | If { test; then_expr; else_expr } ->
         fprintf ppf "if (%a) {@[<v>%a@]} else {@[<v>%a@]}}"

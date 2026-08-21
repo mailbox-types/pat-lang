@@ -98,7 +98,13 @@ and let_insert (comp : comp) : comp =
             let fvs = fvs_with_bindings comp bindings in
             insert_let_bindings fvs bindings (WithIrMetadata.make ~fvs (Return v'))
         | App { func; args } ->
-            let (func_bindings, func') = force_variable func in
+            let (func_bindings, func') =
+                begin
+                    match WithIrMetadata.node func with
+                    | Primitive p -> ([], WithIrMetadata.make (Primitive p))
+                    | _ -> force_variable func
+                end
+            in
             let (args_bindings, args') = let_bind_value_list args in
             let bindings = func_bindings @ args_bindings in
             let fvs = fvs_with_bindings comp bindings in
@@ -208,9 +214,14 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
             insert_dup dups (Evaluation_ir.Return v')
         | App { func; args } ->
             (* func is guaranteed a bare variable post let-insertion *)
-            let func_var = unwrap_var (WithIrMetadata.node func) in
+            let func_target =
+                match WithIrMetadata.node func with
+                    | Variable (v, _) -> Evaluation_ir.UserFunction v
+                    | Primitive p -> Evaluation_ir.PrimitiveFunction p
+                    | _ -> assert false (* FIXME: more informative error*)
+            in 
             let (dups, args') = transform_val_sequence decls borrowed owned args in
-            insert_dup (VarMultiset.bindings dups) (Evaluation_ir.App { func = func_var; args = args' })
+            insert_dup (VarMultiset.bindings dups) (Evaluation_ir.App { func = func_target; args = args' })
         (* When doing branching control flow: when processing each subexpression, owned environment is the
               intersection of the current owned environment and the free variables of the subexpression.
               Then in the body, drop everything that is in the owned environment but not the current environment.

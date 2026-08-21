@@ -63,8 +63,6 @@ type value_env = RuntimeValue.value_env
 
 type runtime_message = (message_tag * RuntimeValue.t list)
 
-(* Only closures and tuples need to be reference counted (data constructors
-   are not yet representable as runtime values). *)
 let should_ref_count =
   let open RuntimeValue in
   function

@@ -596,30 +596,26 @@
                     "filename": "pat-tests/list-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "list-2",
                     "filename": "pat-tests/list-2.pat",
                     "exit_code": 0,
                     "stdout": "3\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "list-mb",
                     "filename": "pat-tests/list-mb.pat",
                     "exit_code": 0,
                     "stdout": "done\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "Tree traversal",
                     "filename": "pat-tests/traversal.pat",
-                    "exit_code": 0,
-                    "ignore": true
+                    "exit_code": 0
                 },
                 {
                     "name": "mb-function-return",
@@ -668,16 +664,14 @@
                     "filename": "pat-tests/sum-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "sum-2",
                     "filename": "pat-tests/sum-2.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "unr-mb-fun",

@@ -151,9 +151,12 @@ and let_insert_guard (guard : guard) : guard =
         | Empty (b, c) -> WithIrMetadata.make ~fvs:(get_fvs guard) (Empty (b, let_insert c))
         | Fail -> guard
 
+let runtime_error err =
+    raise <| Errors.internal_error "reference_counting.ml" err
+
 let unwrap_var = function
     | Variable (v, _) -> v
-    | _ -> raise <| Errors.internal_error "reference_counting.ml" "Tried to unwrap non-variable."
+    | _ -> runtime_error "Tried to unwrap non-variable."
 
 let insert_dup (dups : (Var.t * int) list) (comp : Evaluation_ir.comp) : Evaluation_ir.comp =
     let open Evaluation_ir in
@@ -218,7 +221,11 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
                 match WithIrMetadata.node func with
                     | Variable (v, _) -> Evaluation_ir.UserFunction v
                     | Primitive p -> Evaluation_ir.PrimitiveFunction p
-                    | _ -> assert false (* FIXME: more informative error*)
+                    | _ ->
+                        runtime_error
+                            (Format.asprintf
+                                "Application target should be a variable or primitive; got %a"
+                                Ir.pp_value func)
             in 
             let (dups, args') = transform_val_sequence decls borrowed owned args in
             insert_dup (VarMultiset.bindings dups) (Evaluation_ir.App { func = func_target; args = args' })
@@ -330,7 +337,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
                         insert_dup (VarMultiset.bindings dups)
                             (Evaluation_ir.Send { target = target'; message = (tag, message_values'); iname = Option.get iname })
                     (* impossible; transform_val_sequence always gives the same number of values back *)
-                    | _ -> assert false
+                    | _ -> runtime_error "Mismatch in sequence length (transform_val_sequence)"
             end
         | Free (v, iname) ->
             let (dups, v') = ircv borrowed owned v in

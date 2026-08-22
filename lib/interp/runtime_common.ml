@@ -1,8 +1,15 @@
 open Common
-open Ir
+open Common_types
+open Evaluation_ir
 
 module VarMap = Map.Make(Var)
-module RuntimeMap = Map.Make(RuntimeName)
+module RuntimeNameMap = Map.Make(RuntimeName)
+
+let count_names names =
+  List.fold_left
+    (fun acc n -> RuntimeNameMap.update n (function Some c -> Some (c + 1) | None -> Some 1) acc)
+    RuntimeNameMap.empty names
+  |> RuntimeNameMap.bindings
 
 let runtime_error message =
   raise (Errors.internal_error "eval.ml" message)
@@ -19,54 +26,65 @@ module RuntimeValue = struct
     | Primitive of primitive_name
     | Name of RuntimeName.t
     | Tuple of t list
+    | Inject of (string * t list)
     | Closure of {
         lambda: lambda;
         value_env: value_env;
       }
+    | Declaration of Var.t
 
-  let rec of_ir value_env value =
-    match WithIrMetadata.node value with
-    | Ir.VAnnotate (v, _) -> of_ir value_env v
-    | Ir.Atom a -> Atom a
-    | Ir.Constant c -> Constant c
-    | Ir.Primitive p -> Primitive p
-    | Ir.Name n -> Name n
-    | Ir.Tuple vs -> Tuple (List.map (of_ir value_env) vs)
-    | Ir.Lam lambda ->
+  let resolve_var value_env v =
+    match VarMap.find_opt v value_env with
+      | Some irv -> irv
+      | None ->
+        runtime_error
+          (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
+
+  let of_ir value_env value =
+    match value with
+    | Evaluation_ir.Atom a -> Atom a
+    | Evaluation_ir.Constant c -> Constant c
+    | Evaluation_ir.Primitive p -> Primitive p
+    | Evaluation_ir.Name n -> Name n
+    | Evaluation_ir.Tuple vs -> Tuple (List.map (resolve_var value_env) vs)
+    | Evaluation_ir.Inject (s, vs) -> Inject (s, List.map (resolve_var value_env) vs)
+    | Evaluation_ir.Lam lambda ->
       Closure { lambda; value_env }
-    | Ir.Variable (v, _) ->
-      begin
-      match VarMap.find_opt v value_env with
-        | Some irv -> irv
-        | None ->
-          runtime_error
-            (Format.asprintf "Unbound variable during IR conversion: %a" Var.pp v)
-      end
-    | Ir.Inject (_s, _vs) ->
-        runtime_error "Evaluating user-defined datatypes not yet supported"
+    | Evaluation_ir.Variable v -> resolve_var value_env v
 
-  let rec to_ir runtime_value =
+  let rec pp ppf runtime_value =
     match runtime_value with
-    | Atom a ->
-      WithIrMetadata.make (Ir.Atom a)
-    | Constant c ->
-      WithIrMetadata.make (Ir.Constant c)
-    | Primitive p ->
-      WithIrMetadata.make (Ir.Primitive p)
-    | Name n ->
-      WithIrMetadata.make (Ir.Name n)
-    | Tuple vs ->
-      WithIrMetadata.make (Ir.Tuple (List.map to_ir vs))
-    | Closure { lambda; value_env = _ } ->
-      WithIrMetadata.make (Ir.Lam lambda)
-
-  let pp ppf runtime_value =
-    Ir.pp_value ppf (to_ir runtime_value)
+    | Atom a -> Format.pp_print_string ppf (":" ^ a)
+    | Constant c -> Constant.pp ppf c
+    | Primitive p -> Format.pp_print_string ppf p
+    | Name n -> RuntimeName.pp ppf n
+    | Tuple ts -> Format.fprintf ppf "%a" (Util.Utility.pp_print_comma_list pp) ts
+    | Inject (s, ts) -> Format.fprintf ppf "%s(%a)" s (Util.Utility.pp_print_comma_list pp) ts
+    | Closure { lambda; _ } -> Format.fprintf ppf "fun(%a) { ... }" (Util.Utility.pp_print_comma_list Binder.pp) lambda.parameters
+    | Declaration var -> Var.pp ppf var
 end
 
 type value_env = RuntimeValue.value_env
 
-type runtime_message = (Ir.message_tag * RuntimeValue.t list)
+type runtime_message = (message_tag * RuntimeValue.t list)
+
+(* All runtime names reachable from a value, descending through any nesting of
+   Tuple/Inject (e.g. a mailbox stored inside a variant stored inside a tuple). *)
+let rec runtime_names_in_runtime_value value =
+  let open RuntimeValue in
+  match value with
+  | Name runtime_name -> [runtime_name]
+  | Tuple vs
+  | Inject (_, vs) -> List.concat_map runtime_names_in_runtime_value vs
+  | Atom _ | Constant _ | Primitive _ | Closure _ | Declaration _ -> []
+
+(* When returning from a frame, any value for which this predicate returns true
+    will be tracked & RCed by the runtime *)
+let should_ref_count =
+  let open RuntimeValue in
+  function
+    | Closure _ | Tuple _ | Inject _ -> true
+    | _ -> false
 
 
 let rec find_empty_guard guards =
@@ -76,7 +94,7 @@ let rec find_empty_guard guards =
   | [] -> runtime_error "No messages available but no 'empty' guard."
   | guard :: rest ->
     begin
-      match WithIrMetadata.node guard with
+      match guard with
       | Empty (mailbox_binder, cont) -> (mailbox_binder, cont)
       | _ -> find_empty_guard rest
     end
@@ -113,7 +131,7 @@ let rec find_receive_guard tag guards =
       (Format.asprintf "No receive guard available for message tag %s. This should not happen." tag)
   | guard :: rest ->
     begin
-      match WithIrMetadata.node guard with
+      match guard with
       | Receive recv_guard when recv_guard.tag = tag -> recv_guard
       | _ -> find_receive_guard tag rest 
     end

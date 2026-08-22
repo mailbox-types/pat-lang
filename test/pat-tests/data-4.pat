@@ -22,7 +22,7 @@ def choose(flag: Bool, mb: Mb![R]): Either(Mb![R], Int) {
 
 def main(): Unit {
     let mb = new [Mb] in
-    spawn { guard mb : Done { free -> () receive Done() from mb -> free(mb) } };
+    spawn { guard mb : Done { free -> () receive Done() from mb -> (print("freed"); free(mb)) } };
 
     ## choose(true, mb) wraps mb in Left; case below sends Done message
     let result = (choose(true, mb) : Either(Mb![R], Int)) in

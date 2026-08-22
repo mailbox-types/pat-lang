@@ -11,7 +11,184 @@ let pp_varset ppf s =
     VarSet.iter (fun v -> Format.fprintf ppf "%a " Var.pp v) s;
     Format.pp_print_string ppf "}"
 
-let rec insert_reference_counting_comp decls borrowed owned comp =
+
+(* Let-insertion: ensures the subject of a Case, LetTuple, or function
+   application is always a bare variable, and that every argument of a
+   Tuple/Inject construction is a bare variable, hoisting non-variable
+   values into fresh let-bindings otherwise. Required before reference
+   counting / evaluation in order to better support Perceus heap semantics.
+
+   Since we can't insert a let-binder directly into a value, value-level
+   helpers below just return the auxiliary (binder, bound value) pairs
+   they need alongside the rewritten value/value list like we do with dups. *)
+let rec let_bind_value (v : value) : (Binder.t * value) list * value =
+    let get_new_fvs bindings =
+        VarSet.union
+            (get_fvs v)
+            (List.map (Var.of_binder << fst) bindings |> VarSet.of_list)
+    in
+    match WithIrMetadata.node v with
+        | VAnnotate (inner, ty) ->
+            let (bindings, inner') = let_bind_value inner in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (VAnnotate (inner', ty)))
+        | Tuple vs ->
+            let (bindings, vars) = force_variables vs in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (Tuple vars))
+        | Inject (s, vs) ->
+            let (bindings, vars) = force_variables vs in
+            let new_fvs = get_new_fvs bindings in
+            (bindings, WithIrMetadata.make ~fvs:new_fvs (Inject (s, vars)))
+        | Lam lambda ->
+            ([], WithIrMetadata.make ~fvs:(get_fvs v) (Lam { lambda with body = let_insert lambda.body }))
+        | _ -> ([], v)
+
+(* Takes a value and ensures that it's a variable, let-binding if required *)
+and force_variable (v : value) : (Binder.t * value) list * value =
+    let (bindings, v') = let_bind_value v in
+    match WithIrMetadata.node v' with
+        | Variable _ -> (bindings, v')
+        | _ ->
+            let binder = Binder.make () in
+            let var_val =
+                WithIrMetadata.make ~fvs:(VarSet.singleton (Var.of_binder binder)) (Variable (Var.of_binder binder, None))
+            in
+            (bindings @ [ (binder, v') ], var_val)
+and force_variables (vs : value list) : (Binder.t * value) list * value list =
+    List.fold_right
+        (fun v (bindings, vars) ->
+            let (v_bindings, var) = force_variable v in
+            (v_bindings @ bindings, var :: vars))
+        vs ([], [])
+and insert_let_bindings (bindings : (Binder.t * value) list) (comp : comp) : comp =
+    List.fold_right
+        (fun (binder, term_value) cont ->
+            let term = WithIrMetadata.make ~fvs:(get_fvs term_value) (Return term_value) in
+            let fvs =
+                VarSet.union
+                    (get_fvs term_value)
+                    (VarSet.remove (Var.of_binder binder) (get_fvs cont))
+            in
+            WithIrMetadata.make ~fvs (Let { binder; term; cont }))
+        bindings comp
+
+(* Union of the FVs of a list of FV-annotated nodes (values, comps, or guards). *)
+and union_fvs : 'a. 'a WithIrMetadata.t list -> varset = fun nodes ->
+    List.fold_left (fun acc n -> VarSet.union acc (get_fvs n)) VarSet.empty nodes
+
+and bound_fvs (bound : Var.t list) (body : comp) : varset =
+    VarSet.diff (get_fvs body) (VarSet.of_list bound)
+
+and let_insert (comp : comp) : comp =
+    match WithIrMetadata.node comp with
+        | Annotate (c, ty) ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Annotate (let_insert c, ty))
+        | Let { binder; term; cont } ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Let { binder; term = let_insert term; cont = let_insert cont })
+        | Seq (e1, e2) ->
+            WithIrMetadata.make ~fvs:(get_fvs comp) (Seq (let_insert e1, let_insert e2))
+        | Return v ->
+            let (bindings, v') = let_bind_value v in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs:(get_fvs v') (Return v'))
+        | App { func; args } ->
+            let (func_bindings, func') =
+                begin
+                    match WithIrMetadata.node func with
+                    | Primitive p -> ([], WithIrMetadata.make (Primitive p))
+                    | _ -> force_variable func
+                end
+            in
+            let (args_bindings, args') = force_variables args in
+            let bindings = func_bindings @ args_bindings in
+            let fvs = union_fvs (func' :: args') in
+            insert_let_bindings bindings (WithIrMetadata.make ~fvs (App { func = func'; args = args' }))
+        | If { test; then_expr; else_expr } ->
+            let (bindings, test') = let_bind_value test in
+            let then_expr = let_insert then_expr in
+            let else_expr = let_insert else_expr in
+            let fvs =
+                VarSet.union (get_fvs test') (union_fvs [ then_expr; else_expr ])
+            in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs (If { test = test'; then_expr; else_expr }))
+        | LetTuple { binders; tuple; cont } ->
+            let (bindings, tuple') = force_variable tuple in
+            let cont = let_insert cont in
+            let bound = List.map (Var.of_binder << fst) binders in
+            let fvs = VarSet.union (get_fvs tuple') (bound_fvs bound cont) in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs (LetTuple { binders; tuple = tuple'; cont }))
+        | Case { term; ty; branches } ->
+            let (bindings, term') = force_variable term in
+            let branches' = List.map (fun (bnds, body, name) -> (bnds, let_insert body, name)) branches in
+            let fvs =
+                List.fold_left
+                    (fun acc (bnds, body, _) ->
+                        VarSet.union acc (bound_fvs (List.map Var.of_binder bnds) body))
+                    (get_fvs term')
+                    branches'
+            in
+            insert_let_bindings bindings (WithIrMetadata.make ~fvs (Case { term = term'; ty; branches = branches' }))
+        | New _ -> comp
+        | Spawn body ->
+            let body = let_insert body in
+            WithIrMetadata.make ~fvs:(get_fvs body) (Spawn body)
+        | Send { target; message = (tag, vals); iname } ->
+            let (target_bindings, target') = let_bind_value target in
+            let (val_bindings, vals') = force_variables vals in
+            let bindings = target_bindings @ val_bindings in
+            let fvs = union_fvs (target' :: vals') in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs (Send { target = target'; message = (tag, vals'); iname }))
+        | Free (v, iname) ->
+            let (bindings, v') = let_bind_value v in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs:(get_fvs v') (Free (v', iname)))
+        | Guard { target; pattern; guards; iname } ->
+            let (bindings, target') = let_bind_value target in
+            let guards' = List.map let_insert_guard guards in
+            let fvs = VarSet.union (get_fvs target') (union_fvs guards') in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs (Guard { target = target'; pattern; guards = guards'; iname }))
+
+and let_insert_guard (guard : guard) : guard =
+    match WithIrMetadata.node guard with
+        | Receive r -> WithIrMetadata.make ~fvs:(get_fvs guard) (Receive { r with cont = let_insert r.cont })
+        | Empty (b, c) -> WithIrMetadata.make ~fvs:(get_fvs guard) (Empty (b, let_insert c))
+        | Fail -> guard
+
+let runtime_error err =
+    raise <| Errors.internal_error "reference_counting.ml" err
+
+let unwrap_var = function
+    | Variable (v, _) -> v
+    | _ -> runtime_error "Tried to unwrap non-variable."
+
+let unwrap_eval_var = function
+    | Evaluation_ir.Variable v -> v
+    | _ -> runtime_error "Tried to unwrap non-variable (evaluation IR)."
+
+let insert_dup (dups : (Var.t * int) list) (comp : Evaluation_ir.comp) : Evaluation_ir.comp =
+    let open Evaluation_ir in
+    if List.is_empty dups then
+        comp
+    else
+        Seq (Dup dups, comp)
+
+let insert_drop ?(names = []) (drops : (Var.t * int) list) (comp : Evaluation_ir.comp) : Evaluation_ir.comp =
+    let open Evaluation_ir in
+    if List.is_empty drops && List.is_empty names then
+        comp
+    else
+        Seq (Drop { vars = drops; names }, comp)
+
+
+let mk_var_drop vars comp =
+    insert_drop (VarSet.elements vars |> List.map (fun v -> (v, 1))) comp
+
+let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir.comp =
     let irc = insert_reference_counting_comp decls in
     let ircv borrowed owned v = 
         let (dups, v') = insert_reference_counting_val decls borrowed owned v in
@@ -19,33 +196,22 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
     in
     let ircg borrowed guards_owned g = insert_reference_counting_guard decls borrowed guards_owned g in
     match WithIrMetadata.node comp with
-        | Annotate (c, ty) ->
-            let c' = irc borrowed owned c in
-            let fvs = get_fvs c' in
-            WithIrMetadata.make ~fvs (Annotate (c', ty))
+        | Annotate (c, _ty) ->
+            (* Evaluation_ir discards type annotations entirely *)
+            irc borrowed owned c
         | Let { binder; term; cont } ->
             let binder_var = Var.of_binder binder in
             let cont_fvs = get_fvs cont in
             let e2_owned = VarSet.(inter owned (diff cont_fvs (singleton binder_var))) in
             let e1_owned = VarSet.diff owned e2_owned in
             let e1_trans = irc borrowed e1_owned term in
+            let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
             (* Insert a drop if binder is unused in e2 *)
             if VarSet.mem binder_var cont_fvs then
-                let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
-                let fvs = VarSet.union (get_fvs e1_trans) (get_fvs e2_trans) in
-                WithIrMetadata.make ~fvs (Let { binder; term = e1_trans; cont = e2_trans })
+                Evaluation_ir.Let { binder; term = e1_trans; cont = e2_trans }
             else
-                let e2_trans = irc borrowed (VarSet.(union e2_owned (singleton binder_var))) cont in
-                let drop_node =
-                    WithIrMetadata.make ~fvs:(VarSet.singleton binder_var)
-                        (Drop { vars = [ (binder_var, 1) ]; names = [] })
-                in
-                let e2_trans_with_drop = 
-                    let fvs = VarSet.union (get_fvs drop_node) (get_fvs e2_trans) in
-                    WithIrMetadata.make ~fvs (Seq (drop_node, e2_trans))
-                in
-                let fvs = VarSet.union (get_fvs e1_trans) (get_fvs e2_trans_with_drop) in
-                WithIrMetadata.make ~fvs (Let { binder; term = e1_trans; cont = e2_trans_with_drop })
+                let e2_trans_with_drop = insert_drop [ (binder_var, 1) ] e2_trans in
+                Evaluation_ir.Let { binder; term = e1_trans; cont = e2_trans_with_drop }
         | Seq (e1, e2) ->
             (* e2_owned : owned environment of e2. Calculated by the intersection of owned environment and FVs of e2. *)
             let e2_owned = VarSet.inter owned (get_fvs e2) in
@@ -57,42 +223,37 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let e2_borrowed = borrowed in
             let e1' = irc e1_borrowed e1_owned e1 in
             let e2' = irc e2_borrowed e2_owned e2 in
-            let fvs = VarSet.union (get_fvs e1') (get_fvs e2') in
-            WithIrMetadata.make ~fvs (Seq (e1', e2'))
+            Evaluation_ir.Seq (e1', e2')
         | Return v ->
             let (dups, v') = ircv borrowed owned v in
-            let return_node = WithIrMetadata.make ~fvs:(get_fvs v') (Return v') in
-            Ir.insert_dup dups return_node
+            insert_dup dups (Evaluation_ir.Return v')
         | App { func; args } ->
-            begin
-                match transform_val_sequence decls borrowed owned (func :: args) with
-                    | (dups, func' :: args') ->
-                        let dups_list = VarMultiset.bindings dups in
-                        let fvs = List.fold_left (fun acc v -> VarSet.union acc (get_fvs v)) VarSet.empty (func' :: args') in
-                        Ir.insert_dup dups_list (WithIrMetadata.make ~fvs (App { func = func'; args = args' }))
-                    (* impossible; transform_val_sequence always gives the same number of values back *)
-                    | _ -> assert false
-            end
+            (* func is guaranteed a bare variable post let-insertion *)
+            let func_target =
+                match WithIrMetadata.node func with
+                    | Variable (v, _) -> Evaluation_ir.UserFunction v
+                    | Primitive p -> Evaluation_ir.PrimitiveFunction p
+                    | _ ->
+                        runtime_error
+                            (Format.asprintf
+                                "Application target should be a variable or primitive; got %a"
+                                Ir.pp_value func)
+            in 
+            let (dups, args') = transform_val_sequence decls borrowed owned args in
+            let arg_vars = List.map unwrap_eval_var args' in
+            insert_dup (VarMultiset.bindings dups) (Evaluation_ir.App { func = func_target; args = arg_vars })
         (* When doing branching control flow: when processing each subexpression, owned environment is the
               intersection of the current owned environment and the free variables of the subexpression.
               Then in the body, drop everything that is in the owned environment but not the current environment.
               Borrowed environment is just the current borrowed environment. *)
-        (* The 'match' schema in the Perceus paper rather unhelpfully has a variable literal as the scrutinee.
-           However this isn't too big a deal -- drops will ensure same FVs in each branch. Then we can just
+        (* The 'match' schema in the Perceus paper has a variable literal as the scrutinee.
+           'If' is a specialisation of that rule. Drops will ensure same FVs in each branch. Then we can just
             say that the borrowed environment for the test is the union of the borrowed env and the owned env of the branches. *)
         | If { test; then_expr; else_expr } ->
             let branches_owned = VarSet.inter owned
                 (VarSet.union
                     (get_fvs then_expr)
                     (get_fvs else_expr)) in
-            let mk_drop vars cont =
-                let var_list =
-                    vars
-                    |> VarSet.elements
-                    |> List.map (fun v -> (v, 1))
-                in
-                Ir.insert_drop var_list cont
-            in
             (* Drop everything in the branches_owned set that is not in the current *)
             let test_borrowed = VarSet.union borrowed branches_owned in
             let test_owned = VarSet.diff owned branches_owned in
@@ -103,15 +264,14 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let translated_then = irc borrowed then_owned then_expr in
             let translated_else = irc borrowed else_owned else_expr in
 
-            let final_then_expr = mk_drop (VarSet.diff branches_owned then_owned) translated_then in
-            let final_else_expr = mk_drop (VarSet.diff branches_owned else_owned) translated_else in
-            let fvs = VarSet.union (get_fvs translated_test) (VarSet.union (get_fvs final_then_expr) (get_fvs final_else_expr)) in
-            let translated_if = 
-                WithIrMetadata.make ~fvs (If { 
-                    test = translated_test; then_expr = final_then_expr; else_expr = final_else_expr })
-            in
-            Ir.insert_dup dups translated_if
+            let final_then_expr = mk_var_drop (VarSet.diff branches_owned then_owned) translated_then in
+            let final_else_expr = mk_var_drop (VarSet.diff branches_owned else_owned) translated_else in
+            insert_dup dups
+                (Evaluation_ir.If { test = translated_test; then_expr = final_then_expr; else_expr = final_else_expr })
         | LetTuple { binders; tuple; cont } ->
+            (* tuple is guaranteed a bare variable post let-insertion *)
+            let tuple_var = unwrap_var (WithIrMetadata.node tuple) in
+            let owned = VarSet.diff owned (VarSet.singleton tuple_var) in
             let cont_fvs = get_fvs cont in
             let binders_set = 
                 binders
@@ -125,124 +285,78 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             in
             (* cont_drop: everything in binders that isn't used in cont *)
             let cont_drop = VarSet.diff binders_set cont_fvs in
-            let tuple_borrowed = VarSet.union borrowed cont_owned in
-            let tuple_owned = VarSet.diff owned tuple_borrowed in
-            let (dups, translated_tuple) = ircv tuple_borrowed tuple_owned tuple in
             let translated_cont =  irc borrowed cont_owned cont in
-            let final_translated_cont = 
-                if VarSet.is_empty cont_drop then
-                    translated_cont
-                else
-                    (* Drop binders if variables unused *)
-                    let drop_node =
-                        WithIrMetadata.make ~fvs:cont_drop
-                            (Drop { vars = (VarSet.to_list cont_drop |> List.map (fun v -> (v, 1))); names = [] })
-                    in
-                    let fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_cont) in
-                    WithIrMetadata.make ~fvs (Seq (drop_node, translated_cont))
-                in
-            let translated_let_tuple =
-                let fvs = VarSet.union (get_fvs translated_tuple) (get_fvs final_translated_cont) in
-                WithIrMetadata.make ~fvs (LetTuple { binders; tuple = translated_tuple; cont = final_translated_cont })
-            in
-            Ir.insert_dup dups translated_let_tuple
-        (* SJF TODO: Implement this for the general ADT case *)
-        | Case _ ->
-            raise <| Errors.internal_error "reference_counting.ml" "Evaluating case-expressions not yet supported"
-            (*
-        | Case { term; branch1 = ((bnd1, ty1), e1); branch2 = ((bnd2, ty2), e2) } ->
-            let bnd1_var = Var.of_binder bnd1 in
-            let bnd2_var = Var.of_binder bnd2 in
-            let e1_fvs = get_fvs e1 in
-            let e2_fvs = get_fvs e2 in
-            let e1_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd1_var)) e1_fvs in
-            let e2_owned = VarSet.inter (VarSet.union owned (VarSet.singleton bnd2_var)) e2_fvs in
-            let e1_owned_without_binder = VarSet.diff e1_owned (VarSet.singleton bnd1_var) in
-            let e2_owned_without_binder = VarSet.diff e2_owned (VarSet.singleton bnd2_var) in
-            (* branches_owned: all owned variables occurring in either branch *)
-            let branches_owned =
-                VarSet.inter owned (VarSet.union e1_owned_without_binder e2_owned_without_binder)
-            in
-            let mk_drop vars =
+            let final_translated_cont = mk_var_drop cont_drop translated_cont in
+            Evaluation_ir.LetTuple { binders = List.map fst binders; tuple = tuple_var; cont = final_translated_cont }
+        | Case { term; branches; _ } ->
+            let var = unwrap_var (WithIrMetadata.node term) in
+            let owned = VarSet.diff owned (VarSet.singleton var) in
+            let mk_drop vars transformed_comp =
                 let var_list =
                     VarSet.elements vars
                     |> List.map (fun v -> (v, 1))
                 in
-                WithIrMetadata.make ~fvs:vars (Drop { vars = var_list; names = [] })
+                insert_drop var_list transformed_comp
             in
-            (* ei_drop: variables owned by branches (+binder), but not used. 
-               ensures variables are dropped if they're not used in that branch. *)
-            let e1_drop = mk_drop (
-                VarSet.diff 
-                    (VarSet.union branches_owned (VarSet.singleton (Var.of_binder bnd1)))
-                    e1_owned
-            )
+            (* The owned set of each branch is the owned environment overall,
+               extended with bound vars, intersected with FVs of body*)
+            (* Collect all envs along with transformed (incl. drops) bodies *)
+            let transformed_branches =
+                List.map (fun (params, comp, constr)  ->
+                    let params_vars = List.map Var.of_binder params |> VarSet.of_list in
+                    let owned_with_params = VarSet.union owned params_vars in
+                    let comp_owned =
+                        VarSet.inter
+                            owned_with_params
+                            (WithIrMetadata.fvs comp)
+                    in
+                    let to_drop = VarSet.diff owned_with_params comp_owned in
+                    let transformed_comp =
+                        mk_drop 
+                            to_drop
+                            (irc borrowed comp_owned comp)
+                    in
+                    (params, transformed_comp, constr)
+                ) branches
             in
-            let e2_drop = mk_drop (
-                VarSet.diff 
-                    (VarSet.union branches_owned (VarSet.singleton (Var.of_binder bnd2)))
-                    e2_owned
-            )
-            in
-            (* borrowed variables for the term: borrowed variables + variables used in branches *)
-            let term_borrowed = VarSet.union borrowed branches_owned in
-            let term_owned = VarSet.diff owned branches_owned in
-            let (dups, translated_term) = ircv term_borrowed term_owned term in
-            let translated_e1 = irc borrowed e1_owned e1 in
-            let translated_e2 = irc borrowed e2_owned e2 in
-            let final_e1_fvs = VarSet.union (get_fvs e1_drop) (get_fvs translated_e1) in
-            let final_e2_fvs = VarSet.union (get_fvs e2_drop) (get_fvs translated_e2) in
-            let final_e1 =
-                WithIrMetadata.make ~fvs:final_e1_fvs (Seq (e1_drop, translated_e1))
-            in
-            let final_e2 =
-                WithIrMetadata.make ~fvs:final_e2_fvs (Seq (e2_drop, translated_e2))
-            in
-            let translated_case_fvs = VarSet.union (get_fvs translated_term) (VarSet.union (get_fvs final_e1) (get_fvs final_e2)) in
-            let translated_case =
-                WithIrMetadata.make ~fvs:translated_case_fvs (Case {
-                    term = translated_term;
-                    branch1 = ((bnd1, ty1), final_e1);
-                    branch2 = ((bnd2, ty2), final_e2)
-                })
-            in
-            Ir.insert_dup dups translated_case
-            *)
+            Evaluation_ir.Case { scrutinee = var; branches = transformed_branches }
         | New interface ->
-            WithIrMetadata.make ~fvs:VarSet.empty (New interface)
+            Evaluation_ir.New interface
         | Spawn e ->
-            (* We need any reference counting that's done inside the expression
-               to happen in the parent thread, **not** the spawned thread. Otherwise we end up
-               with a concurrency bug: required duplications will be deferred until the 
-               spawned thread is scheduled. By hoisting any duplications to the parent thread we
-               ensure the continuation is evaluated in a consistent state regardless of scheduling. *)
-            let counted_body = irc borrowed owned e in
-            let unchanged = WithIrMetadata.make ~fvs:(get_fvs counted_body) (Spawn counted_body) in
-            begin
-                match WithIrMetadata.node counted_body with
-                    | Seq (e1, e2) ->
-                        begin match WithIrMetadata.node e1 with
-                            | Dup _dups ->
-                                let spawn_fvs = get_fvs e2 in
-                                WithIrMetadata.make ~fvs:(VarSet.union (get_fvs e1) spawn_fvs) (Seq (e1, WithIrMetadata.make ~fvs:spawn_fvs (Spawn e2)))
-                            | _ -> unchanged
-                        end
-                    | _ -> unchanged
-            end
+            (* Any duplication the spawned body needs from the enclosing scope has to
+               happen in the parent thread, **not** the spawned thread. Otherwise we end
+               up with a concurrency bug: the duplication is deferred until the spawned
+               thread is first scheduled, and the parent may consume its own reference
+               before that happens.
+
+               Rather than trying to spot dups in the translated body (which only works
+               when one lands at the very front of it), we transfer ownership up-front:
+               everything the body uses that we borrow is dup'd here, and the body
+               is then translated with those variables owned, so it generates no dups for
+               them itself. *)
+            let body_fvs = get_fvs e in
+            let transferred = VarSet.inter borrowed body_fvs in
+            (* Owned variables are moved into the body *)
+            let body_owned = VarSet.union owned transferred in
+            let body_borrowed = VarSet.diff borrowed transferred in
+            let counted_body = irc body_borrowed body_owned e in
+            let dups = VarSet.elements transferred |> List.map (fun v -> (v, 1)) in
+            insert_dup dups (Evaluation_ir.Spawn counted_body)
         | Send { target; message = (tag, message_values); iname } -> 
             begin
                 match transform_val_sequence decls borrowed owned (target :: message_values) with
                     | (dups, target' :: message_values') ->
-                        let dups_list = VarMultiset.bindings dups in
-                        let fvs = List.fold_left (fun acc v -> VarSet.union acc (get_fvs v)) VarSet.empty (target' :: message_values') in
-                        Ir.insert_dup dups_list
-                            (WithIrMetadata.make ~fvs (Send { target = target'; message = (tag, message_values'); iname }))
+                        (* Payloads are stored in the mailbox and rebound at the receive, so
+                           each must be a bare variable; the target stays a general value. *)
+                        let message_vars = List.map unwrap_eval_var message_values' in
+                        insert_dup (VarMultiset.bindings dups)
+                            (Evaluation_ir.Send { target = target'; message = (tag, message_vars); iname = Option.get iname })
                     (* impossible; transform_val_sequence always gives the same number of values back *)
-                    | _ -> assert false
+                    | _ -> runtime_error "Mismatch in sequence length (transform_val_sequence)"
             end
         | Free (v, iname) ->
             let (dups, v') = ircv borrowed owned v in
-            Ir.insert_dup dups (WithIrMetadata.make ~fvs:(get_fvs v') (Free (v', iname)))
+            insert_dup dups (Evaluation_ir.Free (v', Option.get iname))
         | Guard { target; pattern; guards; iname } ->
             let guards_fvs =
                 List.fold_left
@@ -255,16 +369,8 @@ let rec insert_reference_counting_comp decls borrowed owned comp =
             let target_owned = VarSet.diff owned guards_owned in
             let (dups, translated_target) = ircv target_borrowed target_owned target in
             let translated_guards = List.map (ircg borrowed guards_owned) guards in
-            let guard_fvs = List.fold_left (fun acc g -> VarSet.union acc (get_fvs g)) (get_fvs translated_target) translated_guards in
-            let translated_guard =
-                WithIrMetadata.make ~fvs:guard_fvs (Guard { target = translated_target; pattern; guards = translated_guards; iname })
-            in
-            Ir.insert_dup dups translated_guard
-        | Drop _
-        | Dup _ -> raise <| 
-            Errors.internal_error
-                "reference_counting.ml"
-                "Reference counting pass should not see Drop or Dup nodes"
+            insert_dup dups
+                (Evaluation_ir.Guard { target = translated_target; pattern; guards = translated_guards; iname = Option.get iname })
 (* Helper function to annotate an ordered sequence of values. We need to consider all subsequent
     variables used in a sequence as borrowed. The best way of doing this is to reverse the
     list of variables and keep the borrow set as an accumulator, then reverse again at the end. *)
@@ -304,32 +410,32 @@ However this doesn't work because we can only send syntactic values. Instead we'
   x ! M(y); guard y { ... }
 It's not as exactly local as Perceus but it's safe.
 *)
-and insert_reference_counting_val decls borrowed owned value =
+and insert_reference_counting_val decls borrowed owned value : VarMultiset.t * Evaluation_ir.value =
     let decl_vars =
         decls |> List.map Var.of_binder |> VarSet.of_list
     in
     match WithIrMetadata.node value with
-        | VAnnotate (v, ty) ->
-            let (dups, v) = insert_reference_counting_val decls borrowed owned v in
-            (dups, WithIrMetadata.make ~fvs:(get_fvs v) (VAnnotate (v, ty)))
-        | Atom _
-        | Constant _
-        | Primitive _
-        | Name _ ->
-            (VarMultiset.empty, value)
-        | Inject (_s, _vs) ->
-            raise <| Errors.internal_error "reference_counting.ml" "Evaluating ADTs not yet supported"
+        | VAnnotate (v, _ty) ->
+            (* Evaluation_ir discards type annotations entirely *)
+            insert_reference_counting_val decls borrowed owned v
+        | Atom s -> (VarMultiset.empty, Evaluation_ir.Atom s)
+        | Constant c -> (VarMultiset.empty, Evaluation_ir.Constant c)
+        | Primitive p -> (VarMultiset.empty, Evaluation_ir.Primitive p)
+        | Name n -> (VarMultiset.empty, Evaluation_ir.Name n)
+        | Inject (s, vs) ->
+            let (dups, vs') = transform_val_sequence decls borrowed owned vs in
+            (dups, Evaluation_ir.Inject (s, List.map unwrap_eval_var vs'))
         | Variable (x, _) ->
             if VarSet.mem x owned || VarSet.mem x decl_vars then
-              (* Owned or global declaration -- no dup needed *)
-              (VarMultiset.empty, value)
+              (* Don't bother adding dup instruction if variable is owned, or is
+              a declaration. *)
+              (VarMultiset.empty, Evaluation_ir.Variable x)
             else
-              (VarMultiset.singleton x, value)
-        | Tuple vs -> 
-            let (dups, vs') = transform_val_sequence decls borrowed owned vs in 
-            let fvs = List.fold_left (fun acc v -> VarSet.union acc (get_fvs v)) VarSet.empty vs' in
-            (dups, WithIrMetadata.make ~fvs (Tuple vs'))
-        | Lam { linear; parameters; result_type; body } ->
+              (VarMultiset.singleton x, Evaluation_ir.Variable x)
+        | Tuple vs ->
+            let (dups, vs') = transform_val_sequence decls borrowed owned vs in
+            (dups, Evaluation_ir.Tuple (List.map unwrap_eval_var vs'))
+        | Lam { linear = _; parameters; result_type = _; body } ->
             let fvs = get_fvs value in
             let body_fvs = get_fvs body in
             let (used_vars, unused_vars) =
@@ -343,23 +449,13 @@ and insert_reference_counting_val decls borrowed owned value =
             (* to_drop: FVs not in owned environment *)
             let to_dup = VarSet.diff fvs owned |> VarSet.to_list |> VarMultiset.of_list in
             let to_drop = List.map (fun v -> (v, 1)) unused_vars in
-            let transformed_body =
-                let drop_node =
-                    WithIrMetadata.make ~fvs:(VarSet.of_list unused_vars)
-                        (Drop { vars = to_drop; names = [] })
-                in
-                let body_trans = insert_reference_counting_comp decls VarSet.empty body_owned_vars body in
-                let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs body_trans) in
-                if List.is_empty unused_vars then
-                    body_trans
-                else 
-                    WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, body_trans))
-            in
-            (to_dup, WithIrMetadata.make ~fvs:(VarSet.union (VarSet.of_list used_vars) fvs) (Lam { linear; parameters; result_type; body = transformed_body }))
-and insert_reference_counting_guard decls borrowed guards_owned guard =
+            let body_trans = insert_reference_counting_comp decls VarSet.empty body_owned_vars body in
+            let transformed_body = insert_drop to_drop body_trans in
+            (to_dup, Evaluation_ir.Lam { parameters = List.map fst parameters; fvs; body = transformed_body })
+and insert_reference_counting_guard decls borrowed guards_owned guard : Evaluation_ir.guard =
     let irc borrowed owned c = insert_reference_counting_comp decls borrowed owned c in
     match WithIrMetadata.node guard with
-        | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
+        | Receive { tag; payload_binders; mailbox_binder; strategy = _; cont } ->
             let binders_set =
                 mailbox_binder :: payload_binders
                 |> List.map Var.of_binder
@@ -373,19 +469,8 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
             (* to drop: all vars incl. binders minus what is actually used *)
             let cont_drop = VarSet.diff guards_owned_with_binders cont_owned in
             let translated_cont = irc borrowed cont_owned cont in
-            let final_cont =
-                if VarSet.is_empty cont_drop then
-                    translated_cont
-                else
-                    let drop_node =
-                        WithIrMetadata.make ~fvs:cont_drop
-                            (Drop { vars = (VarSet.elements cont_drop |> List.map (fun v -> (v, 1))); names = [] })
-                    in
-                    let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_cont) in
-                    WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, translated_cont))
-            in
-            let receive_fvs = get_fvs final_cont in
-            WithIrMetadata.make ~fvs:receive_fvs (Receive { tag; payload_binders; mailbox_binder; strategy; cont = final_cont })
+            let final_cont = mk_var_drop cont_drop translated_cont in
+            Evaluation_ir.Receive { tag; payload_binders; mailbox_binder; cont = final_cont }
         (* Similar to case-expressions, just processed in isolation *)
         | Empty (binder, e) ->
             let binder_var = Var.of_binder binder in
@@ -396,65 +481,46 @@ and insert_reference_counting_guard decls borrowed guards_owned guard =
             in
             let e_drop = VarSet.diff guards_owned_plus_binder e_owned in
             let translated_e = irc borrowed e_owned e in
-            let final_e =
-                if VarSet.is_empty e_drop then
-                    translated_e
-                else
-                    let drop_node =
-                        WithIrMetadata.make ~fvs:e_drop
-                            (Drop { vars = (VarSet.elements e_drop |> List.map (fun v -> (v, 1))); names = [] })
-                    in
-                    let seq_fvs = VarSet.union (get_fvs drop_node) (get_fvs translated_e) in
-                    WithIrMetadata.make ~fvs:seq_fvs (Seq (drop_node, translated_e))
-            in
-            let empty_fvs = get_fvs final_e in
-            WithIrMetadata.make ~fvs:empty_fvs (Empty (binder, final_e))
+            let final_e = mk_var_drop e_drop translated_e in
+            Evaluation_ir.Empty (binder, final_e)
         | Fail ->
-            WithIrMetadata.make ~fvs:VarSet.empty Fail
+            Evaluation_ir.Fail
 
-let insert_reference_counting prog =
+let insert_reference_counting prog : Evaluation_ir.program =
     let decls =
         prog.prog_decls
         |> List.map (fun (decl : Ir.decl) -> decl.decl_name)
     in
     let transform_body c =
+        let c = let_insert c in
         insert_reference_counting_comp
             decls
             Ir.VarSet.empty
             Ir.VarSet.empty
             c
-        |> Ir.normalise_seq
     in
-    let transform_decl (decl : Ir.decl) =
+    let transform_decl (decl : Ir.decl) : Evaluation_ir.decl =
+        let decl_body = let_insert decl.decl_body in
         let parameter_vars =
             decl.decl_parameters
             |> List.map (fun (b, _) -> Ir.Var.of_binder b)
         in
-        let body_fvs = get_fvs decl.decl_body in
+        let body_fvs = get_fvs decl_body in
         let (used_params, unused_params) =
             List.partition (fun v -> VarSet.mem v body_fvs) parameter_vars
         in
         let body_owned_vars = used_params |> Ir.VarSet.of_list in
         let body_trans =
-            insert_reference_counting_comp decls Ir.VarSet.empty body_owned_vars decl.decl_body
-            |> Ir.normalise_seq
+            insert_reference_counting_comp decls Ir.VarSet.empty body_owned_vars decl_body
         in
-        let decl_body =
-            if List.is_empty unused_params then
-                body_trans
-            else
-                let unused_set = unused_params |> Ir.VarSet.of_list in
-                let drop_node =
-                    WithIrMetadata.make ~fvs:unused_set
-                        (Drop { vars = (List.map (fun v -> (v, 1)) unused_params); names = [] })
-                in
-                let fvs = VarSet.union (get_fvs drop_node) (get_fvs body_trans) in
-                WithIrMetadata.make ~fvs (Seq (drop_node, body_trans))
-        in
-        { decl with decl_body }
+        let decl_body = insert_drop (List.map (fun v -> (v, 1)) unused_params) body_trans in
+        {
+            Evaluation_ir.decl_name = decl.decl_name;
+            decl_parameters = List.map fst decl.decl_parameters;
+            decl_body;
+        }
     in
     {
-        prog with
-            prog_decls = List.map transform_decl prog.prog_decls;
-            prog_body = Option.map transform_body prog.prog_body;
+        Evaluation_ir.prog_decls = List.map transform_decl prog.prog_decls;
+        prog_body = Option.map transform_body prog.prog_body;
     }

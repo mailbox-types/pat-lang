@@ -6,8 +6,8 @@ let desugar p =
     |> Desugar_let_annotations.desugar
     |> Desugar_sugared_guards.desugar
 
-let with_reference_counting prog : Ir.program = 
-    Interp.Reference_counting.insert_reference_counting prog 
+let with_reference_counting prog : Interp.Evaluation_ir.program =
+    Interp.Reference_counting.insert_reference_counting prog
 
 let typecheck p ir = 
     let () =
@@ -16,22 +16,23 @@ let typecheck p ir =
                 "=== Intermediate Representation: ===\n%a\n\n"
                 (Ir.pp_program) ir
     in
-    let () =
-        if Settings.(get show_ref_counting) then
-            Format.printf
-                "=== With Reference Counting: ===\n%a\n\n"
-                Ir.pp_program
-                (with_reference_counting ir)
-    in
     let ir, prety_opt = Typecheck.Pretypecheck.check ir in
     let (ty, env, constrs) = Typecheck.Gen_constraints.synthesise_program ir in
     let solution = Typecheck.Solve_constraints.solve_constraints constrs in
     let p = Sugar_ast.substitute_solution solution p in
     let ir = Ir.substitute_solution solution ir in
     let () =
-        if not Settings.(get typecheck_only) then
+        if Settings.(get show_ref_counting) || not Settings.(get typecheck_only) then
             let rc_ir = with_reference_counting ir in
-            Interp.Eval.run_program rc_ir
+            let () =
+                if Settings.(get show_ref_counting) then
+                    Format.printf
+                        "=== With Reference Counting: ===\n%a\n\n"
+                        Interp.Evaluation_ir.pp_program
+                        rc_ir
+            in
+            if not Settings.(get typecheck_only) then
+                Interp.Eval.run_program rc_ir
     in
     (p, prety_opt, ir, ty, env, constrs)
 

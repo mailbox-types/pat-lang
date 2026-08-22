@@ -596,30 +596,26 @@
                     "filename": "pat-tests/list-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "list-2",
                     "filename": "pat-tests/list-2.pat",
                     "exit_code": 0,
                     "stdout": "3\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "list-mb",
                     "filename": "pat-tests/list-mb.pat",
                     "exit_code": 0,
                     "stdout": "done\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "Tree traversal",
                     "filename": "pat-tests/traversal.pat",
-                    "exit_code": 0,
-                    "ignore": true
+                    "exit_code": 0
                 },
                 {
                     "name": "mb-function-return",
@@ -664,20 +660,25 @@
                     "stderr": ""
                 },
                 {
+                    "name": "spawn-dup-hoist",
+                    "filename": "pat-tests/spawn-dup-hoist.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
                     "name": "sum-1",
                     "filename": "pat-tests/sum-1.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "sum-2",
                     "filename": "pat-tests/sum-2.pat",
                     "exit_code": 0,
                     "stdout": "5\n",
-                    "stderr": "",
-                    "ignore": true
+                    "stderr": ""
                 },
                 {
                     "name": "unr-mb-fun",
@@ -691,6 +692,80 @@
                     "filename": "pat-tests/unr-mb-fun-2.pat",
                     "exit_code": 0,
                     "stdout": "Ignoring 1!\nIgnored 1!\nIgnoring 2!\nIgnored 2!\nFreed!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-1",
+                    "filename": "pat-tests/data-1.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n0\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-2",
+                    "filename": "pat-tests/data-2.pat",
+                    "exit_code": 0,
+                    "stdout": "3\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-3",
+                    "filename": "pat-tests/data-3.pat",
+                    "exit_code": 0,
+                    "stdout": "1\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-4",
+                    "filename": "pat-tests/data-4.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-expr",
+                    "filename": "pat-tests/data-expr.pat",
+                    "exit_code": 0,
+                    "stdout": "20\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "data-mixed",
+                    "filename": "pat-tests/data-mixed.pat",
+                    "exit_code": 0,
+                    "stdout": "6\nHello!\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "tuple-counting",
+                    "filename": "pat-tests/tuple-counting.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": "",
+                    "args": [
+                        "-q",
+                        "-j"
+                    ]
+                },
+                {
+                    "name": "heap-arg-ctor",
+                    "filename": "pat-tests/heap-arg-ctor.pat",
+                    "exit_code": 0,
+                    "stdout": "freed\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "heap-payload-ctor",
+                    "filename": "pat-tests/heap-payload-ctor.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "heap-arg-lambda",
+                    "filename": "pat-tests/heap-arg-lambda.pat",
+                    "exit_code": 0,
+                    "stdout": "6\n",
                     "stderr": ""
                 }
             ]

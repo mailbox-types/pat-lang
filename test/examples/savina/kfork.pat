@@ -13,9 +13,9 @@ interface ActorMb {
 def actor(self: ActorMb?): Unit {
   guard self: Packet* {
     free ->
-      ()
+      print("freed")
     receive Packet() from self ->
-      let dummy = fact(rand(100000)) in
+      let dummy = fact(rand(10)) in
       actor(self)
   }
 }
@@ -32,6 +32,7 @@ def fact(n: Int): Int {
 
 ## Sends the given number of messages to the specified actor mailbox.
 def flood(numMessages: Int, actorMb: ActorMb!): Unit {
+  print(intToString(numMessages));
   if (numMessages <= 0) {
     ()
   }
@@ -54,8 +55,8 @@ def main(): Unit {
   spawn { actor(actorMb3) };
 
   flood(100, actorMb1);
-  flood(1000, actorMb1);
-  flood(10000, actorMb1)
+  flood(100, actorMb2);
+  flood(100, actorMb3)
 }
 
 main()

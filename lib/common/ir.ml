@@ -182,12 +182,6 @@ and comp_node =
         guards: guard list;
         iname: string option
       }
-        (* Reference counting instructions inserted after typechecking *)
-        | Drop of {
-                vars: ((Var.t[@name "var"]) * int) list;
-                names: ((RuntimeName.t[@name "runtime_name"]) * int) list
-            }
-    | Dup of ((Var.t[@name "var"]) * int) list
 and value = (value_node WithIrMetadata.t [@name "withIR"])
 and lambda = {
     linear: bool;
@@ -230,21 +224,6 @@ and guard_node =
             "Type.map"; "Pretype.map"; "Binder.map";
             "RuntimeName.map"; "Interface.map"; "Var.map"; "WithIrMetadata.map"];
         data = false }]
-
-let insert_dup (dups : (Var.t * int) list) (comp : comp) : comp =
-    if List.is_empty dups then
-        comp
-    else
-        let fvs = WithIrMetadata.fvs comp in
-        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Dup dups), comp))
-
-let insert_drop ?(names = []) (drops : (Var.t * int) list) (comp : comp) : comp =
-    if List.is_empty drops && List.is_empty names then
-        comp
-    else
-        let fvs = WithIrMetadata.fvs comp in
-        WithIrMetadata.make ~fvs (Seq (WithIrMetadata.make ~fvs (Drop { vars = drops; names }), comp))
-
 
 let normalise_seq comp =
     let right_nest_seq c =
@@ -379,26 +358,6 @@ and pp_comp ppf comp_with_pos =
             pp_value target
             Type.Pattern.pp pattern
             (pp_print_newline_list pp_guard) guards
-    | Drop { vars; names } ->
-        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
-        let pp_name ppf (name, count) = fprintf ppf "\"%a\":%d" RuntimeName.pp name count in
-        begin
-            match (vars, names) with
-            | (_, []) ->
-                fprintf ppf "drop (%a)"
-                    (pp_print_comma_list pp_var) vars
-            | ([], _) ->
-                fprintf ppf "drop_names (%a)"
-                    (pp_print_comma_list pp_name) names
-            | _ ->
-                fprintf ppf "drop (vars=[%a], names=[%a])"
-                    (pp_print_comma_list pp_var) vars
-                    (pp_print_comma_list pp_name) names
-        end
-    | Dup vars ->
-        let pp_var ppf (var, count) = fprintf ppf "\"%s\":%d" (Var.unique_name var) count in
-        fprintf ppf "dup (%a)"
-            (pp_print_comma_list pp_var) vars
 and pp_value ppf v =
     pp_value_node ppf (WithIrMetadata.node v)
 and pp_value_node ppf value =

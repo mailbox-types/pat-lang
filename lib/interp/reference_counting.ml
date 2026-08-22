@@ -44,8 +44,7 @@ let rec let_bind_value (v : value) : (Binder.t * value) list * value =
             ([], WithIrMetadata.make ~fvs:(get_fvs v) (Lam { lambda with body = let_insert lambda.body }))
         | _ -> ([], v)
 
-(* Ensures [v] is a bare variable: first fixes up any nested Tuple/Inject content,
-   then binds the result itself if it isn't already a Variable. *)
+(* Takes a value and ensures that it's a variable, let-binding if required *)
 and force_variable (v : value) : (Binder.t * value) list * value =
     let (bindings, v') = let_bind_value v in
     match WithIrMetadata.node v' with
@@ -56,18 +55,12 @@ and force_variable (v : value) : (Binder.t * value) list * value =
                 WithIrMetadata.make ~fvs:(VarSet.singleton (Var.of_binder binder)) (Variable (Var.of_binder binder, None))
             in
             (bindings @ [ (binder, v') ], var_val)
-
 and force_variables (vs : value list) : (Binder.t * value) list * value list =
     List.fold_right
         (fun v (bindings, vars) ->
             let (v_bindings, var) = force_variable v in
             (v_bindings @ bindings, var :: vars))
         vs ([], [])
-
-(* Wraps [comp] in a let-binding per hoisted value. FVs are recomputed bottom-up:
-   a Let binds its binder, so the binder must *not* leak into the enclosing FV set.
-   Reference counting splits ownership using these sets, so an over-approximation
-   here makes it dup a variable that the continuation never uses (and then leak it). *)
 and insert_let_bindings (bindings : (Binder.t * value) list) (comp : comp) : comp =
     List.fold_right
         (fun (binder, term_value) cont ->
@@ -173,8 +166,6 @@ let unwrap_var = function
     | Variable (v, _) -> v
     | _ -> runtime_error "Tried to unwrap non-variable."
 
-(* Post let-insertion, positions typed as [Var.t] in Evaluation_ir (App args, message
-   payloads, Tuple/Inject fields) are guaranteed to hold bare variables. *)
 let unwrap_eval_var = function
     | Evaluation_ir.Variable v -> v
     | _ -> runtime_error "Tried to unwrap non-variable (evaluation IR)."
@@ -345,8 +336,7 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
                them itself. *)
             let body_fvs = get_fvs e in
             let transferred = VarSet.inter borrowed body_fvs in
-            (* Owned variables are moved into the body wholesale; the invariant on [owned]
-               guarantees they are all free in it. *)
+            (* Owned variables are moved into the body *)
             let body_owned = VarSet.union owned transferred in
             let body_borrowed = VarSet.diff borrowed transferred in
             let counted_body = irc body_borrowed body_owned e in
@@ -437,7 +427,8 @@ and insert_reference_counting_val decls borrowed owned value : VarMultiset.t * E
             (dups, Evaluation_ir.Inject (s, List.map unwrap_eval_var vs'))
         | Variable (x, _) ->
             if VarSet.mem x owned || VarSet.mem x decl_vars then
-              (* Owned or global declaration -- no dup needed *)
+              (* Don't bother adding dup instruction if variable is owned, or is
+              a declaration. *)
               (VarMultiset.empty, Evaluation_ir.Variable x)
             else
               (VarMultiset.singleton x, Evaluation_ir.Variable x)

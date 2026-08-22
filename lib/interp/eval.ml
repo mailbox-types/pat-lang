@@ -85,28 +85,11 @@ let unwrap_runtime_name = function
 let force_runtime_name env var =
   force_var VarMap.empty env var |> unwrap_runtime_name
 
-
-let runtime_name_of_var env var =
-  match VarMap.find_opt var env with
-  | Some (RuntimeValue.Name n) -> n
-  | Some _ -> runtime_error "Non runtime-name in runtime_name_of_var"
-  | None -> runtime_error (Format.asprintf "Unbound variable: %a" Var.pp var)
-
-
-let lookup_runtime_names env var =
-  List.concat_map
-    (fun var ->
-      lookup_env env var |> runtime_names_in_runtime_value) var
-  |> count_names
-
-(* Like lookup_runtime_names, but aggregates count, used for Dup/Drop *)
-let lookup_weighted_runtime_names env vars =
-  vars
-  |> List.concat_map (fun (var, count) ->
-      lookup_env env var
-      |> runtime_names_in_runtime_value
-      |> List.concat_map (fun name -> List.init count (fun _ -> name)))
-  |> count_names
+let check_runtime_name env var =
+  let value = force_var VarMap.empty env var in
+  match value with
+    | RuntimeValue.Name rn -> Some rn
+    | _ -> None
 
 (* Looks up the definition, free variable set, and stored environment of a closure. *)
 let lookup_lambda runtime name =
@@ -432,7 +415,11 @@ let rec step_current runtime state =
               ref, extend the env with param -> arg mappings, and eval body *) 
             | Name name ->
               let (lambda, fvs, closure_env) = lookup_lambda runtime name in
-              let dup_names = lookup_runtime_names state.env (VarSet.elements fvs) in
+              let dup_names =
+                List.map 
+                  (fun var -> (force_runtime_name state.env var, 1))
+                  (VarSet.elements fvs)
+              in
               Runtime.dup runtime dup_names;
               Runtime.drop runtime [ (name, 1) ];
               let extended_env = bind_many_rt lambda.parameters args closure_env in
@@ -453,7 +440,7 @@ let rec step_current runtime state =
       else
         finish_current { state with current_comp = else_expr }
     | LetTuple { binders; tuple; cont } ->
-      let tuple_name = runtime_name_of_var state.env tuple in
+      let tuple_name = force_runtime_name state.env tuple in
       let tuple_values = lookup_tuple runtime tuple_name in
       let names_in_values = List.concat_map runtime_names_in_runtime_value tuple_values in
         Runtime.dup runtime (count_names names_in_values);
@@ -463,7 +450,7 @@ let rec step_current runtime state =
         let env' = bind_many_rt binders tuple_values state.env in
         finish_current { state with current_comp = cont; env = env' }
     | Case { scrutinee; branches; _ } ->
-        let scrutinee_name = runtime_name_of_var state.env scrutinee in
+        let scrutinee_name = force_runtime_name state.env scrutinee in
         let (constructor, arguments) = lookup_constructor runtime scrutinee_name in
         let names_in_args = List.concat_map runtime_names_in_runtime_value arguments in
         Runtime.dup runtime (count_names names_in_args);
@@ -515,11 +502,21 @@ let rec step_current runtime state =
       Runtime.free_mailbox runtime rt_name;
       return_unit state
     | Dup vars ->
-      let names = lookup_weighted_runtime_names state.env vars in
+      let names = 
+        List.concat_map (fun (value, c) ->
+          match check_runtime_name state.env value with
+          | Some rn -> [(rn, c)]
+          | _ -> []) vars
+      in
       Runtime.dup runtime names;
       return_unit state
     | Drop { vars; names } ->
-      let var_names = lookup_weighted_runtime_names state.env vars in
+      let var_names = 
+        List.concat_map (fun (value, c) ->
+          match check_runtime_name state.env value with
+          | Some rn -> [(rn, c)]
+          | _ -> []) vars
+      in
       Runtime.drop runtime (var_names @ names);
       return_unit state
     | Spawn comp ->

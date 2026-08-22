@@ -31,7 +31,6 @@ module RuntimeValue = struct
         lambda: lambda;
         value_env: value_env;
       }
-    (* An unresolved reference to a top-level declaration. *)
     | Declaration of Var.t
 
   let resolve_var value_env v =
@@ -79,6 +78,8 @@ let rec runtime_names_in_runtime_value value =
   | Inject (_, vs) -> List.concat_map runtime_names_in_runtime_value vs
   | Atom _ | Constant _ | Primitive _ | Closure _ | Declaration _ -> []
 
+(* When returning from a frame, any value for which this predicate returns true
+    will be tracked & RCed by the runtime *)
 let should_ref_count =
   let open RuntimeValue in
   function

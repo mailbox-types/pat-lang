@@ -79,9 +79,6 @@ and value =
     | Lam of lambda
 and lambda = {
     parameters: Binder.t list;
-    (* Free variables of the lambda as a whole, computed during reference counting.
-       Retained here so the runtime can drop a dying closure's captured refs without
-       having to recompute free variables by re-traversing the body. *)
     fvs: VarSet.t;
     body: comp
 }

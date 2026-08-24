@@ -164,8 +164,8 @@ and check_val :
             | Tuple ts, PTuple pts ->
                 List.combine ts pts
                 |> List.iter (uncurry check_pretype_consistency)
-            | Rec (_, ts), PRec (_, pts) ->
-                List.combine ts pts
+            | Rec (_, ts), PRec (_, ts_p) ->
+                List.combine ts (List.map Pretype.of_type ts_p)
                 |> List.iter (uncurry check_pretype_consistency)
             | _, _ -> Gripers.pretype_consistency ty pty [pos]
     in
@@ -190,7 +190,7 @@ and check_val :
                     let self_ty = ty in
                     let expected_tys =
                         Recursive_types.instantiate_binder_types params self_ty
-                            (fun ty -> ty) ctor_def.binder_sources
+                            ctor_def.binder_sources
                     in
                     (* Apply make_returnable to Param types when no Self sources *)
                     let expected_tys =
@@ -448,7 +448,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                 match scrutinee_ty with
                     | Type.Rec (tname, params) ->
                         begin match Recursive_types.find_type tname with
-                        | Some def -> Recursive_types.constructor_types def params scrutinee_ty (fun ty -> ty)
+                        | Some def -> Recursive_types.constructor_types def params scrutinee_ty
                         | None -> raise (Gripers.expected_recursive_type scrutinee_ty [pos])
                         end
                     | _ ->

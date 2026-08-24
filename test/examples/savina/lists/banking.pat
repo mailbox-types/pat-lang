@@ -18,7 +18,7 @@ interface AccountMb {
 }
 
 def spawnAccounts(numsAccounts: List(Int), soFar: Int, acc: List(AccountMb!)) : List(AccountMb!) {
-  caseL numsAccounts : List(Int) of {
+  case numsAccounts : List(Int) of {
     nil -> acc
     | (n :: ns) ->
         let accountMb = new [AccountMb] in
@@ -57,19 +57,19 @@ def generate_work(tellerMb: TellerMb!, numAccounts: Int, accs : List(AccountMb!)
 
 def pick(accs : List(AccountMb![R]), index : Int, rest : List(AccountMb![R])) : ((Unit + AccountMb![R]) * List(AccountMb![R])) {
 if (index == 0) {
-    caseL accs : List(AccountMb![R]) of {
+    case accs : List(AccountMb![R]) of {
         nil -> let x = () in (inl(x) : (Unit + AccountMb!), rest)
         | (a :: as) -> (inr(a) : (Unit + AccountMb!), append(rest, as))
     }}
 else {
-    caseL accs : List(AccountMb![R]) of {
+    case accs : List(AccountMb![R]) of {
         nil ->  let x = () in (inl(x) : (Unit + AccountMb!), rest)
         | (a :: as) -> pick(as, index - 1, (a :: rest))
     }}
 }
 
 def append(l1 : List(AccountMb![R]), l2: List(AccountMb![R])) : List(AccountMb![R]) {
-    caseL l1 : List(AccountMb![R]) of {
+    case l1 : List(AccountMb![R]) of {
         nil -> l2
         | (a :: as) -> append(as, (a :: l2))
     }
@@ -115,7 +115,7 @@ def teller_loop(self: TellerMb?, accountMbs : List(AccountMb!)): Unit {
 }
 
 def stopAccounts(accs: List(AccountMb!)) : Unit {
-    caseL accs : List(AccountMb!) of {
+    case accs : List(AccountMb!) of {
         nil -> ()
         | (a :: as) ->
             a ! Stop();

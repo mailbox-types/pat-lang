@@ -86,7 +86,7 @@ def choose_dst_acc(tellerMb: TellerMb!, numAccounts: Int, srcAccount: (Unit + Ac
     let dstAccountId = rand(numAccounts - 2) in
   
     let (dstAccount, rest) =
-        (pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R]))) : ((Unit + AccountMb!Credit[R]) * List(AccountMb!1[R])))
+        pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R])))
     in
     let amount = rand(200) in
     case srcAccount of {

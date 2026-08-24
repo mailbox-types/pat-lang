@@ -59,8 +59,9 @@ let rec of_type = function
     | Type.Mailbox { interface; _ } -> PInterface interface
     | Type.UserMailbox { umb_interface; _ } -> PInterface umb_interface
 
-(* As long as a pretype isn't a mailbox type, and isn't a function
-    returning a mailbox type, we can upgrade it to a type.
+(* As long as a pretype isn't a mailbox type, we can upgrade it to a type.
+    Note that we do not need to recurse into PFun/PRec constituent types
+    as they are Types (not pretypes) already.
     This reduces the number of places we need annotations (for example,
     when trying to type an application in synthesis mode). *)
 let rec to_type = function

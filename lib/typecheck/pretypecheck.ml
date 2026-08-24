@@ -176,30 +176,47 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
                 raise (Errors.internal_error "pretypecheck.ml"
                     ("Unknown constructor: " ^ ctor_name))
             | Some (rec_def, ctor_def) ->
-                (* Try to determine type params by synthesising args *)
-                let params = Array.make rec_def.param_count None in
-                let synth_results = List.map2 (fun arg src ->
-                    let (v, ty) = synthesise_val ienv env arg in
-                    begin match src with
-                    | Recursive_types.Param i -> params.(i) <- Some ty
-                    | Recursive_types.Self ->
-                        begin match ty with
-                        | Pretype.PRec (_, ps) ->
-                            List.iteri (fun i p ->
-                                if params.(i) = None then params.(i) <- Some p) ps
-                        | _ -> ()
-                        end
-                    | Recursive_types.Fixed _ -> ()
-                    end;
-                    (v, ty, src)
-                ) args ctor_def.binder_sources in
-                (* Check all params are known *)
-                let all_known = Array.for_all (fun x -> x <> None) params in
+                (* SJF TODO: The existing code was tricky to understand. Rewritten functionally
+                but need to look a little closer... *)
+                (* Try to determine type params by synthesising args. Params
+                   discovered so far are kept as an (index, pretype) assoc list. *)
+                let (params, synth_results) =
+                    List.fold_left (fun (params, synth_results) (arg, src) ->
+                        let (v, ty) = synthesise_val ienv env arg in
+                        let params = match src with
+                            | Recursive_types.Param i ->
+                                (i, ty) :: List.remove_assoc i params
+                            | Recursive_types.Self ->
+                                begin match ty with
+                                | Pretype.PRec (_, ps) ->
+                                    (* Self only fills in params we don't know yet. *)
+                                    List.mapi (fun i p -> (i, p)) ps
+                                    |> List.fold_left (fun params (i, p) ->
+                                        if List.mem_assoc i params then params
+                                        else (i, p) :: params) params
+                                | _ -> params
+                                end
+                            | Recursive_types.Fixed _ -> params
+                        in
+                        (params, (v, ty, src) :: synth_results)
+                    ) ([], []) (List.combine args ctor_def.binder_sources)
+                in
+                let synth_results = List.rev synth_results in
+                (* Check all params are known. Indices are unique by
+                   construction, so param_count of them, all in range,
+                   means we have exactly 0..param_count-1. *)
+                let all_known =
+                    List.length params = rec_def.param_count
+                    && List.for_all (fun (i, _) -> i < rec_def.param_count) params
+                in
                 if not all_known then
                     Gripers.type_mismatch_with_expected pos
                         "a fully-determined recursive type" (Pretype.PTuple [])
                     |> raise;
-                let params = Array.to_list (Array.map Option.get params) in
+                let params =
+                    List.sort (fun (i, _) (j, _) -> Int.compare i j) params
+                    |> List.map snd
+                in
                 let self_ty = Pretype.PRec (rec_def.type_name, params) in
                 (* Re-check args against expected types *)
                 let checked_args = List.map2 (fun (v, _synth_ty, src) arg ->
@@ -239,12 +256,16 @@ and check_val ienv env value ty =
         | Inject (ctor_name, args), Pretype.PRec (tname, params) ->
             begin match Recursive_types.find_constructor ctor_name with
             | Some (rec_def, ctor_def) when rec_def.type_name = tname ->
-                let self_ty = Pretype.PRec (tname, params) in
+                let self_ty = Type.Rec (tname, params) in
                 let expected_tys =
                     Recursive_types.instantiate_binder_types params self_ty
-                        (fun x -> x) ctor_def.binder_sources
+                        ctor_def.binder_sources
                 in
-                let checked_args = List.map2 (check_val ienv env) args expected_tys in
+                let checked_args =
+                    List.map2
+                        (check_val ienv env) args
+                        (List.map Pretype.of_type expected_tys)
+                in
                 wrap (Inject (ctor_name, checked_args))
             | _ ->
                 let value, inferred_ty = synthesise_val ienv env value in
@@ -308,7 +329,8 @@ and synthesise_comp ienv env comp =
                     | Pretype.PRec (tname, params) ->
                         begin match Recursive_types.find_type tname with
                         | Some def ->
-                            Recursive_types.constructor_types def params prety (fun x -> x)
+                            (* Option.get safe here as we know PRec -> Rec is always defined *)
+                            Recursive_types.constructor_types def params (Pretype.to_type prety |> Option.get)
                         | None ->
                             raise
                                 (Gripers.type_mismatch_with_expected pos
@@ -344,7 +366,7 @@ and synthesise_comp ienv env comp =
             (* Look up binder types for each branch *)
             let lookup_tys bname =
                 match List.assoc_opt bname branch_tys with
-                    | Some tys -> tys
+                    | Some tys -> List.map Pretype.of_type tys
                     | None -> raise (Gripers.branch_mismatch_with_expected pos prety bname)
             in
             (* Type-check each branch *)

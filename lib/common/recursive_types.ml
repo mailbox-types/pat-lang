@@ -167,22 +167,21 @@ let find_constructor ctor_name =
         |> Option.map (fun c -> (def, c))
     ) !registry
 
-(* Instantiate binder types for a constructor, given type parameters,
-   self type, and converter for Fixed types.
-   Converter adapts Fixed's concrete Type.t to the call site's type repr 'a. *)
-let instantiate_binder_types params self_ty convert_fixed binder_sources =
+(* Instantiate binder types for a constructor, given type parameters
+   and self type. *)
+let instantiate_binder_types params self_ty binder_sources =
     List.map (function
         | Param i -> List.nth params i
         | Self -> self_ty
-        | Fixed ty -> convert_fixed ty
+        | Fixed ty -> ty
     ) binder_sources
 
 (* Get all (constructor_name, binder_types) pairs for recursive type,
    given type parameters, self type, and converter for Fixed types. *)
-let constructor_types def params self_ty convert_fixed =
+let constructor_types def params self_ty =
     List.map (fun ctor ->
         (ctor.ctor_name,
-         instantiate_binder_types params self_ty convert_fixed ctor.binder_sources)
+         instantiate_binder_types params self_ty ctor.binder_sources)
     ) def.constructors
 
 (* Whether constructor has any Self binder sources.

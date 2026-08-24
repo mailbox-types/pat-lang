@@ -12,7 +12,7 @@ type t =
     | PFun of { linear: bool; args: (Type.t[@name "ty"]) list; result: (Type.t[@name "ty"]) }
     | PInterface of string
     | PTuple of t list
-    | PRec of (string * t list)
+    | PRec of (string * ((Type.t[@name "ty"]) list))
     [@@name "pretype"]
     [@@deriving visitors { variety = "map" }]
 and base = [%import: Common_types.Base.t]
@@ -36,13 +36,13 @@ let rec pp ppf =
             (pp_print_list ~pp_sep:(pp_star) pp) ts
     | PRec ("Sum", [t1; t2]) ->
         fprintf ppf "(%a + %a)"
-            pp t1
-            pp t2
+            Type.pp t1
+            Type.pp t2
     | PRec (s, ts) ->
         let pp_comma ppf () = pp_print_string ppf ", " in
         fprintf ppf "%s(%a)"
         s
-        (pp_print_list ~pp_sep:(pp_comma) pp) ts
+        (pp_print_list ~pp_sep:(pp_comma) Type.pp) ts
     | PInterface name -> ps name
 
 let show t =
@@ -55,7 +55,7 @@ let rec of_type = function
     | Type.Fun { linear; args; result } ->
         PFun { linear; args; result = result }
     | Type.Tuple ts -> PTuple (List.map of_type ts)
-    | Type.Rec (s, ts) -> PRec (s, List.map of_type ts)
+    | Type.Rec (s, ts) -> PRec (s, ts)
     | Type.Mailbox { interface; _ } -> PInterface interface
     | Type.UserMailbox { umb_interface; _ } -> PInterface umb_interface
 
@@ -75,12 +75,5 @@ let rec to_type = function
                     Option.bind (to_type x) (fun t -> go (t :: acc) xs)
         in
         Option.bind (go [] ts) (fun ts -> Some (Type.Tuple ts))
-    | PRec (s, ts) ->
-        let rec go acc =
-            function
-                | [] -> Some (List.rev acc)
-                | x :: xs ->
-                    Option.bind (to_type x) (fun t -> go (t :: acc) xs)
-        in
-        Option.bind (go [] ts) (fun ts -> Some (Type.Rec (s, ts)))
+    | PRec (s, ts) -> Some (Type.Rec (s, ts))
     | PInterface _ -> None

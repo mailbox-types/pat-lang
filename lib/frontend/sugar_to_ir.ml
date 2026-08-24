@@ -244,7 +244,6 @@ and transform_expr :
 
         | Case {
             term;
-            ty;
             branches } ->
             transform_subterm decls env term (fun env v ->
                 let ir_branches = List.map (fun (bnds, comp, s) ->
@@ -263,7 +262,7 @@ and transform_expr :
                 with_fvs fvs (
                 Ir.Case {
                     term = v;
-                    ty = ty;
+                    prety = None;
                     branches = ir_branches;
                 }) |> k env)
         | Seq (e1, e2) ->

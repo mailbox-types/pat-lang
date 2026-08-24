@@ -237,16 +237,12 @@ and check_val ienv env value ty =
     let wrap = WithIrMetadata.make ~pos ~fvs in
     match value_node, ty with
         | Inject (ctor_name, args), Pretype.PRec (tname, params) ->
-            (* SJF: Revisit logic.
-               Lookup constructor. If not found, revert to synthesis -- though
-               not sure this would help and maybe we should fail earlier.
-            *)
             begin match Recursive_types.find_constructor ctor_name with
             | Some (rec_def, ctor_def) when rec_def.type_name = tname ->
                 let self_ty = Pretype.PRec (tname, params) in
                 let expected_tys =
                     Recursive_types.instantiate_binder_types params self_ty
-                        Pretype.of_type ctor_def.binder_sources
+                        (fun x -> x) ctor_def.binder_sources
                 in
                 let checked_args = List.map2 (check_val ienv env) args expected_tys in
                 wrap (Inject (ctor_name, checked_args))
@@ -303,31 +299,30 @@ and synthesise_comp ienv env comp =
             let env' = PretypeEnv.bind (Var.of_binder binder) term_ty env in
             let cont, cont_ty = synthesise_comp ienv env' cont in
             wrap (Let { binder; term; cont }), cont_ty
-        | Case { term; ty = ty1; branches } ->
-            let prety1 = Pretype.of_type ty1 in
-            let term =
-                check_val ienv env term prety1
+        | Case { term; branches; _ } ->
+            let (term, prety) =
+                synthesise_val ienv env term
             in
             let branch_tys =
-                match prety1 with
+                match prety with
                     | Pretype.PRec (tname, params) ->
                         begin match Recursive_types.find_type tname with
                         | Some def ->
-                            Recursive_types.constructor_types def params prety1 Pretype.of_type
+                            Recursive_types.constructor_types def params prety (fun x -> x)
                         | None ->
                             raise
                                 (Gripers.type_mismatch_with_expected pos
-                                 "a recursive type" prety1)
+                                 "a recursive type" prety)
                         end
                     | _ ->
                         raise
                             (Gripers.type_mismatch_with_expected pos
-                             "a recursive type" prety1)
+                             "a recursive type" prety)
             in
             (* Validate branch names and check for duplicates *)
             let () = List.iter (fun (_, _, bname) ->
                 if not (List.mem_assoc bname branch_tys) then
-                    raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+                    raise (Gripers.branch_mismatch_with_expected pos prety bname)
             ) branches in
             let branch_names = List.map (fun (_, _, s) -> s) branches in
             let () =
@@ -342,7 +337,7 @@ and synthesise_comp ienv env comp =
             let () =
                 let all_ctors = List.map fst branch_tys in
                 let missing = List.filter (fun c -> not (List.mem c branch_names)) all_ctors in
-                if missing <> [] then raise (Gripers.branch_not_exhaustive pos prety1 missing)
+                if missing <> [] then raise (Gripers.branch_not_exhaustive pos prety missing)
             in
             (* Sort branches into canonical order *)
             let sorted_branches = List.sort (fun (_, _, s1) (_, _, s2) -> String.compare s1 s2) branches in
@@ -350,7 +345,7 @@ and synthesise_comp ienv env comp =
             let lookup_tys bname =
                 match List.assoc_opt bname branch_tys with
                     | Some tys -> tys
-                    | None -> raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+                    | None -> raise (Gripers.branch_mismatch_with_expected pos prety bname)
             in
             (* Type-check each branch *)
             let checked_branches, result_ty =
@@ -371,7 +366,7 @@ and synthesise_comp ienv env comp =
                     (bnds1, e1, s1) :: checked_rest, e1_ty
             in
             wrap
-                (Case { term; ty = ty1; branches = checked_branches }), result_ty
+                (Case { term; prety = Some prety; branches = checked_branches }), result_ty
         | LetTuple { binders; tuple; cont } ->
             let bnds = List.map fst binders in
             let tuple, tuple_ty = synthv tuple in

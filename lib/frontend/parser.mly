@@ -274,8 +274,8 @@ linearity:
 basic_expr:
     | ctor_name LEFT_PAREN separated_list(COMMA, expr) RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ($1, $3) )}
     | ctor_name { with_pos_from_positions $startpos $endpos ( Inject ($1, []) )}
-    | CASE basic_expr type_annot OF LEFT_BRACE separated_list(PIPE, branch) RIGHT_BRACE
-        { with_pos_from_positions $startpos $endpos ( Case { term = $2; ty = $3; branches = $6 } )}
+    | CASE basic_expr OF LEFT_BRACE PIPE? separated_nonempty_list(PIPE, branch) RIGHT_BRACE
+        { with_pos_from_positions $startpos $endpos ( Case { term = $2; branches = $6 } )}
     (* New *)
     | NEW LEFT_BRACK interface_name RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( New $3 )}
     (* Spawn *)

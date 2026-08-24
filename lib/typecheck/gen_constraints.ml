@@ -433,25 +433,32 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
     let pos = WithIrMetadata.pos e in
     match (WithIrMetadata.node e) with
         | Return v -> check_val ienv decl_env v ty
-        | Case { term; ty = ty1; branches } ->
-            let (term_env, term_constrs) =
-                check_val ienv decl_env term ty1
+        | Case { prety = None; _ } -> assert false
+        | Case { term; prety = Some pty; branches } ->
+            let (scrutinee_ty, term_env, term_constrs) =
+                (* Try to check against lifted pretype.
+                   If this does not work, then revert to synthesis, which will require an annotation. *)
+                match Pretype.to_type pty with
+                    | Some ty ->
+                        let (env, constrs) = check_val ienv decl_env term ty in
+                        (ty, env, constrs)
+                    | None -> synthesise_val ienv decl_env term
             in
             let branch_tys =
-                match ty1 with
+                match scrutinee_ty with
                     | Type.Rec (tname, params) ->
                         begin match Recursive_types.find_type tname with
-                        | Some def -> Recursive_types.constructor_types def params ty1 (fun ty -> ty)
-                        | None -> raise (Gripers.expected_recursive_type ty1 [pos])
+                        | Some def -> Recursive_types.constructor_types def params scrutinee_ty (fun ty -> ty)
+                        | None -> raise (Gripers.expected_recursive_type scrutinee_ty [pos])
                         end
                     | _ ->
                         raise
-                            (Gripers.expected_recursive_type ty1 [pos])
+                            (Gripers.expected_recursive_type scrutinee_ty [pos])
             in
             let lookup_tys bname =
                 match List.assoc_opt bname branch_tys with
                     | Some tys -> tys
-                    | None -> raise (Gripers.expected_recursive_type ty1 [pos])
+                    | None -> raise (Gripers.expected_recursive_type scrutinee_ty [pos])
             in
             (* Check each branch and collect environments and constraints *)
             let branch_results = List.map (fun (bnds, comp, bname) ->
@@ -460,8 +467,8 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                 let (comp_env, comp_constrs) = chk comp ty in
                 let comp_env_no_binders = Ty_env.delete_many vars comp_env in
                 let () =
-                    if (not (Type.is_returnable ty1)) then
-                        Ty_env.check_free_mailbox_variables [ty1] comp_env_no_binders
+                    if (not (Type.is_returnable scrutinee_ty)) then
+                        Ty_env.check_free_mailbox_variables [scrutinee_ty] comp_env_no_binders
                 in
                 let env_constrs =
                     Constraint_set.union_many

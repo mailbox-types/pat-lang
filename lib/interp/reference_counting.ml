@@ -120,7 +120,7 @@ and let_insert (comp : comp) : comp =
             let fvs = VarSet.union (get_fvs tuple') (bound_fvs bound cont) in
             insert_let_bindings bindings
                 (WithIrMetadata.make ~fvs (LetTuple { binders; tuple = tuple'; cont }))
-        | Case { term; ty; branches } ->
+        | Case { term; prety; branches } ->
             let (bindings, term') = force_variable term in
             let branches' = List.map (fun (bnds, body, name) -> (bnds, let_insert body, name)) branches in
             let fvs =
@@ -130,7 +130,7 @@ and let_insert (comp : comp) : comp =
                     (get_fvs term')
                     branches'
             in
-            insert_let_bindings bindings (WithIrMetadata.make ~fvs (Case { term = term'; ty; branches = branches' }))
+            insert_let_bindings bindings (WithIrMetadata.make ~fvs (Case { term = term'; prety; branches = branches' }))
         | New _ -> comp
         | Spawn body ->
             let body = let_insert body in

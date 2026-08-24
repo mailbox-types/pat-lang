@@ -51,7 +51,7 @@ def spawnActors(numActors: Int, acc: List(ActorMb!)): List(ActorMb!) {
 }
 
 def floodActors(numMessages: Int, actorMbs: List(ActorMb!)): Unit {
-    caseL actorMbs : List(ActorMb!) of {
+    case actorMbs of {
         nil -> ()
       | (a :: as) ->
             flood(numMessages, a);

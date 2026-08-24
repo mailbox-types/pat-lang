@@ -93,6 +93,15 @@ module Gripers = struct
         in
         raise (pretype_error msg [pos])
 
+    let cannot_synth_ctor_arg pos ctor_name prety =
+        let msg =
+            asprintf
+                "Cannot synthesise a type for argument of constructor '%s': its type %a mentions a mailbox type. Please give the constructor a type annotation."
+                ctor_name
+                Pretype.pp prety
+        in
+        raise (pretype_error msg [pos])
+
     let cannot_synth_empty_guards pos () =
         let msg =
             asprintf "Need at least one non-fail guard to synthesise the type for a 'guard' expression."
@@ -107,13 +116,42 @@ module Gripers = struct
 
 end
 
+let list_eq eq xs ys =
+    List.length xs = List.length ys && List.for_all2 eq xs ys
+
+(* Structural equality on pretypes since
+   syntactic equality is too strong in the presence of arbitrary types
+   contained in PFun and PRec.
+   In particular, if constituent types contain mailbox patterns then
+    we'd be syntactically comparing patterns / pattern variables, which
+    is wrong. During pretyping we just need to check whether the capabilities
+    and interfaces match. *)
+let rec pretype_eq (t1 : Pretype.t) (t2 : Pretype.t) =
+    let open Pretype in
+    match t1, t2 with
+        | PBase b1, PBase b2 -> b1 = b2
+        | PInterface i1, PInterface i2 -> i1 = i2
+        | PTuple ts1, PTuple ts2 -> list_eq pretype_eq ts1 ts2
+        | PFun { linear = lin1; args = args1; result = res1 },
+          PFun { linear = lin2; args = args2; result = res2 } ->
+            lin1 = lin2 && list_eq ty_eq args1 args2 && ty_eq res1 res2
+        | PRec (name1, ts1), PRec (name2, ts2) ->
+            name1 = name2 && list_eq ty_eq ts1 ts2
+        | _, _ -> false
+(* Equality on the types included in PFun / PRec. Mailbox types need to have
+    same capabilities and interfaces. *)
+and ty_eq (ty1 : Type.t) (ty2 : Type.t) =
+    match ty1, ty2 with
+        | Type.Mailbox { capability = cap1; interface = iface1; _ },
+          Type.Mailbox { capability = cap2; interface = iface2; _ } ->
+            cap1 = cap2 && iface1 = iface2
+        | _, _ -> pretype_eq (Pretype.of_type ty1) (Pretype.of_type ty2)
+
 (* Note: This basically works since we only have mailbox subtyping at present.
  If we were to allow subtyping on other types (e.g., records), we would need
  to expand this. *)
 let check_tys pos_list expected actual =
-    if expected = actual then
-        ()
-    else
+    if not (pretype_eq expected actual) then
         Gripers.type_mismatch pos_list expected actual
 
 module PretypeEnv = struct
@@ -176,42 +214,57 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
                 raise (Errors.internal_error "pretypecheck.ml"
                     ("Unknown constructor: " ^ ctor_name))
             | Some (rec_def, ctor_def) ->
-                (* Try to determine type params by synthesising args *)
+                (* Try to determine the type params by synthesising the args.
+
+                   An argument whose pretype mentions a mailbox can't resolve
+                   to a Type.t and so it can't fix a parameter by itself.
+                   However, it might be the case that it's recoverable from
+                   elsewhere, e.g. an annotated Nil in a list.
+                   So we record where such an argument was and only report an
+                   error if its parameter is still undetermined once every
+                   argument has been considered. *)
                 let params = Array.make rec_def.param_count None in
-                let synth_results = List.map2 (fun arg src ->
-                    let (v, ty) = synthesise_val ienv env arg in
-                    begin match src with
-                    | Recursive_types.Param i -> params.(i) <- Some ty
-                    | Recursive_types.Self ->
+                let blocked = Array.make rec_def.param_count None in
+                List.iter2 (fun arg src ->
+                    let (_, pty) = synthesise_val ienv env arg in
+                    match Pretype.to_type pty, src with
+                    | Some ty, Recursive_types.Param i -> params.(i) <- Some ty
+                    | Some ty, Recursive_types.Self ->
                         begin match ty with
-                        | Pretype.PRec (_, ps) ->
+                        | Rec (_, ps) ->
                             List.iteri (fun i p ->
                                 if params.(i) = None then params.(i) <- Some p) ps
                         | _ -> ()
                         end
-                    | Recursive_types.Fixed _ -> ()
-                    end;
-                    (v, ty, src)
-                ) args ctor_def.binder_sources in
+                    | None, Recursive_types.Param i ->
+                        if blocked.(i) = None then
+                            blocked.(i) <- Some (WithIrMetadata.pos arg, pty)
+                    | Some _, Recursive_types.Fixed _
+                    | None, (Recursive_types.Self | Recursive_types.Fixed _) -> ()
+                ) args ctor_def.binder_sources;
                 (* Check all params are known *)
-                let all_known = Array.for_all (fun x -> x <> None) params in
-                if not all_known then
-                    Gripers.type_mismatch_with_expected pos
-                        "a fully-determined recursive type" (Pretype.PTuple [])
-                    |> raise;
+                Array.iteri (fun i param ->
+                    if param = None then
+                        match blocked.(i) with
+                        | Some (arg_pos, pty) ->
+                            Gripers.cannot_synth_ctor_arg arg_pos ctor_name pty
+                        | None ->
+                            Gripers.type_mismatch_with_expected pos
+                                "a fully-determined recursive type" (Pretype.PTuple [])
+                            |> raise
+                ) params;
                 let params = Array.to_list (Array.map Option.get params) in
-                let self_ty = Pretype.PRec (rec_def.type_name, params) in
+                let self_ty = Type.Rec (rec_def.type_name, params) in
                 (* Re-check args against expected types *)
-                let checked_args = List.map2 (fun (v, _synth_ty, src) arg ->
+                let checked_args = List.map2 (fun src arg ->
                     let expected = match src with
                         | Recursive_types.Param i -> List.nth params i
                         | Recursive_types.Self -> self_ty
-                        | Recursive_types.Fixed ty -> Pretype.of_type ty
+                        | Recursive_types.Fixed ty -> ty
                     in
-                    ignore v;
-                    check_val ienv env arg expected
-                ) synth_results args in
-                wrap (Inject (ctor_name, checked_args)), self_ty
+                    check_val ienv env arg (Pretype.of_type expected)
+                ) ctor_def.binder_sources args in
+                wrap (Inject (ctor_name, checked_args)), (Pretype.of_type self_ty)
             end
         | Lam { linear; parameters; result_type; body } ->
             (* Defer linearity checking to constraint generation. *)
@@ -237,18 +290,18 @@ and check_val ienv env value ty =
     let wrap = WithIrMetadata.make ~pos ~fvs in
     match value_node, ty with
         | Inject (ctor_name, args), Pretype.PRec (tname, params) ->
-            (* SJF: Revisit logic.
-               Lookup constructor. If not found, revert to synthesis -- though
-               not sure this would help and maybe we should fail earlier.
-            *)
             begin match Recursive_types.find_constructor ctor_name with
             | Some (rec_def, ctor_def) when rec_def.type_name = tname ->
-                let self_ty = Pretype.PRec (tname, params) in
+                let self_ty = Type.Rec (tname, params) in
                 let expected_tys =
                     Recursive_types.instantiate_binder_types params self_ty
-                        Pretype.of_type ctor_def.binder_sources
+                        ctor_def.binder_sources
                 in
-                let checked_args = List.map2 (check_val ienv env) args expected_tys in
+                let checked_args =
+                    List.map2
+                        (check_val ienv env) args
+                        (List.map Pretype.of_type expected_tys)
+                in
                 wrap (Inject (ctor_name, checked_args))
             | _ ->
                 let value, inferred_ty = synthesise_val ienv env value in
@@ -303,31 +356,31 @@ and synthesise_comp ienv env comp =
             let env' = PretypeEnv.bind (Var.of_binder binder) term_ty env in
             let cont, cont_ty = synthesise_comp ienv env' cont in
             wrap (Let { binder; term; cont }), cont_ty
-        | Case { term; ty = ty1; branches } ->
-            let prety1 = Pretype.of_type ty1 in
-            let term =
-                check_val ienv env term prety1
+        | Case { term; branches; _ } ->
+            let (term, prety) =
+                synthesise_val ienv env term
             in
             let branch_tys =
-                match prety1 with
+                match prety with
                     | Pretype.PRec (tname, params) ->
                         begin match Recursive_types.find_type tname with
                         | Some def ->
-                            Recursive_types.constructor_types def params prety1 Pretype.of_type
+                            (* Option.get safe here as we know PRec -> Rec is always defined *)
+                            Recursive_types.constructor_types def params (Pretype.to_type prety |> Option.get)
                         | None ->
                             raise
                                 (Gripers.type_mismatch_with_expected pos
-                                 "a recursive type" prety1)
+                                 "a recursive type" prety)
                         end
                     | _ ->
                         raise
                             (Gripers.type_mismatch_with_expected pos
-                             "a recursive type" prety1)
+                             "a recursive type" prety)
             in
             (* Validate branch names and check for duplicates *)
             let () = List.iter (fun (_, _, bname) ->
                 if not (List.mem_assoc bname branch_tys) then
-                    raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+                    raise (Gripers.branch_mismatch_with_expected pos prety bname)
             ) branches in
             let branch_names = List.map (fun (_, _, s) -> s) branches in
             let () =
@@ -342,15 +395,15 @@ and synthesise_comp ienv env comp =
             let () =
                 let all_ctors = List.map fst branch_tys in
                 let missing = List.filter (fun c -> not (List.mem c branch_names)) all_ctors in
-                if missing <> [] then raise (Gripers.branch_not_exhaustive pos prety1 missing)
+                if missing <> [] then raise (Gripers.branch_not_exhaustive pos prety missing)
             in
             (* Sort branches into canonical order *)
             let sorted_branches = List.sort (fun (_, _, s1) (_, _, s2) -> String.compare s1 s2) branches in
             (* Look up binder types for each branch *)
             let lookup_tys bname =
                 match List.assoc_opt bname branch_tys with
-                    | Some tys -> tys
-                    | None -> raise (Gripers.branch_mismatch_with_expected pos prety1 bname)
+                    | Some tys -> List.map Pretype.of_type tys
+                    | None -> raise (Gripers.branch_mismatch_with_expected pos prety bname)
             in
             (* Type-check each branch *)
             let checked_branches, result_ty =
@@ -371,7 +424,7 @@ and synthesise_comp ienv env comp =
                     (bnds1, e1, s1) :: checked_rest, e1_ty
             in
             wrap
-                (Case { term; ty = ty1; branches = checked_branches }), result_ty
+                (Case { term; prety = Some prety; branches = checked_branches }), result_ty
         | LetTuple { binders; tuple; cont } ->
             let bnds = List.map fst binders in
             let tuple, tuple_ty = synthv tuple in

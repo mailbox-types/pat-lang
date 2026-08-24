@@ -17,7 +17,7 @@ interface Mb {
 def wrap(y: Either(Mb![R], Int)): Unit {
     let t = (y, 1) in
     let (m, n) = t in
-    case m : Either(Mb![R], Int) of {
+    case m of {
         Left(mb)  -> mb ! Done()
       | Right(r) -> ()
     }

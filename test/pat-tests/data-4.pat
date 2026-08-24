@@ -26,7 +26,7 @@ def main(): Unit {
 
     ## choose(true, mb) wraps mb in Left; case below sends Done message
     let result = (choose(true, mb) : Either(Mb![R], Int)) in
-    case result : Either(Mb![R], Int) of {
+    case result of {
         Left(m)  -> m ! Done()   ## consume mailbox: send Done
       | Right(n) -> ()           ## no mailbox in this branch
     }

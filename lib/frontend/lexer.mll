@@ -45,7 +45,6 @@ let keywords = [
     "if", IF;
     "else", ELSE;
     "case", CASE;
-    "caseL", CASEL;
     "of", OF;
     "data", DATA
 ]

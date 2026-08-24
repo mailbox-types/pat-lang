@@ -43,7 +43,6 @@ and expr_node =
     | Inject of string * expr list
     | Case of {
         term: expr;
-        ty: (Type.t[@name "ty"]);
         branches: (sugar_binder list * expr * string) list
     }
     (* Note that we're using the versions of new and spawn where they are
@@ -220,10 +219,9 @@ and pp_expr ppf expr_with_pos =
         end
     | Inject (name, es) ->
         fprintf ppf "%s(%a)" name (pp_print_comma_list pp_expr) es
-    | Case { term; ty; branches } ->
-        fprintf ppf "case %a : %a of { %a }"
+    | Case { term; branches } ->
+        fprintf ppf "case %a of { %a }"
             pp_expr term
-            Type.pp ty
             (pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf " | ") pp_sugar_branch) branches
     | Tuple es ->
         fprintf ppf "(%a)" (pp_print_comma_list pp_expr) es

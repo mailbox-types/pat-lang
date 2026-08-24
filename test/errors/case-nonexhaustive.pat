@@ -5,7 +5,7 @@
 data Task = Base | Step Task Task
 
 def describe(t: Task): Int {
-    case t : Task of {
+    case t of {
         Base -> 0
     }
 }

@@ -1,12 +1,12 @@
 def snoc(xs : List(Int), x : Int): List(Int) {
-    caseL xs : List(Int) of {
+    case xs of {
         nil -> (x :: (nil : List(Int)))
       | (y :: ys) -> (y :: snoc(ys, x))
     }
 }
 
 def reverse(xs : List(Int)): List(Int) {
-    caseL xs : List(Int) of {
+    case xs of {
           nil -> nil
         | (y :: ys) -> snoc(reverse(ys), y)
     }
@@ -14,7 +14,7 @@ def reverse(xs : List(Int)): List(Int) {
 
 def main(): Unit {
     let xs = (1 :: (2 :: (3 :: (nil : List(Int))))) in
-    caseL reverse(xs) : List(Int) of {
+    case reverse(xs) of {
         nil -> print("nil")
       | (y :: ys) -> print(intToString(y))
   }

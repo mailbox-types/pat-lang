@@ -118,7 +118,7 @@ def handlePartTaken(self: Warehouse?, door: Door!): Unit {
 }
 
 def discardList(xs: List(Robot!)) : Unit {
-    case xs : List(Robot!) of {
+    case xs of {
         nil -> ()
         | (a :: as) -> discardList(as)
     }

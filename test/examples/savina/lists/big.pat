@@ -113,7 +113,7 @@ def sink(self: SinkMb?, exitMbs : List(ExitMb!)): Unit {
 }
 
 def notifyExits(exitMbs : List(ExitMb!)): Unit {
-    caseL exitMbs : List(ExitMb!) of {
+    case exitMbs of {
     nil -> ()
   | (y :: ys) ->
         y ! Exit();

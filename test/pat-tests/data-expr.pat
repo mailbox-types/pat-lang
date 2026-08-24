@@ -6,7 +6,7 @@
 data Expr = Val Int | Add Expr Expr | Mult Expr Expr
 
 def eval(e: Expr): Int {
-    case e : Expr of {
+    case e of {
         Val(n)      -> n
       | Add(a, b)  -> eval(a) + eval(b)
       | Mult(a, b) -> eval(a) * eval(b)

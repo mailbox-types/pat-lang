@@ -20,7 +20,7 @@ def buildTask(n: Int): FibTask {
 def fib(self: FibMb?): Unit {
     guard self: Req {
         receive Req(replyTo, task) from self ->
-            case task : FibTask of {
+            case task of {
                 FibBase ->
                     replyTo ! Resp(1);
                     free(self)

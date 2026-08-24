@@ -165,7 +165,7 @@ and comp_node =
     }
     | Case of {
         term: value;
-        ty: (Type.t[@name "ty"]);
+        prety: ((Pretype.t[@name "pretype"]) option);
         branches: (((Binder.t[@name "binder"]) list) * comp * string) list
     }
     | New of string
@@ -345,11 +345,11 @@ and pp_comp ppf comp_with_pos =
             (pp_print_comma_list Binder.pp) bs
             pp_value tuple
             pp_comp cont
-    | Case { term; ty; branches } ->
+    | Case { term; prety; branches } ->
         fprintf ppf
             "case %a : %a of {@[<v>%a@]}"
             pp_value term
-            Type.pp ty
+            (pp_print_option ~none:(fun ppf () -> fprintf ppf "<no pretype>") Pretype.pp) prety
             (pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf "@,")
                 (fun ppf (bnds, c, name) -> pp_branch name ppf (bnds, c, name))) branches
     | Guard { target; pattern; guards; _ } ->

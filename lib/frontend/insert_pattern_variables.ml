@@ -151,12 +151,11 @@ let visitor =
                 let cont = self#visit_expr env cont in
                 let new_let = LetTuple { annot = Some tys; binders; term; cont } in
                 { expr_with_pos with node = new_let }
-            | Case { term; ty; branches } ->
+            | Case { term; branches } ->
                 let term = self#visit_expr env term in
-                let ty_ann = annotate_type ty in
                 let branches = List.map (fun (bnds, e, s) ->
                     (bnds, self#visit_expr env e, s)) branches in
-                let new_case = Case { term; ty = ty_ann; branches } in
+                let new_case = Case { term; branches } in
                 { expr_with_pos with node = new_case }
             | _ -> super#visit_expr env expr_with_pos
 

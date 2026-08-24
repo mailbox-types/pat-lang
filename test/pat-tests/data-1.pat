@@ -7,7 +7,7 @@
 data Maybe a = Nothing | Just a
 
 def fromMaybe(x: Maybe(Int), default: Int): Int {
-    case x : Maybe(Int) of {
+    case x of {
         Nothing -> default
       | Just(v) -> v
     }

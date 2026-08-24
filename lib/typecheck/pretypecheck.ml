@@ -119,14 +119,13 @@ end
 let list_eq eq xs ys =
     List.length xs = List.length ys && List.for_all2 eq xs ys
 
-(* Structural equality on pretypes.
-
-   Syntactic equality is too strong: PFun and PRec carry their constituent
-   types as Type.t rather than Pretype.t, so they retain information (in
-   particular, mailbox patterns) which pretyping does not track. Two
-   pretypes which agree as far as pretyping is concerned would then be
-   rejected purely because, say, their mailbox patterns mention different
-   pattern variables. *)
+(* Structural equality on pretypes since
+   syntactic equality is too strong in the presence of arbitrary types
+   contained in PFun and PRec.
+   In particular, if constituent types contain mailbox patterns then
+    we'd be syntactically comparing patterns / pattern variables, which
+    is wrong. During pretyping we just need to check whether the capabilities
+    and interfaces match. *)
 let rec pretype_eq (t1 : Pretype.t) (t2 : Pretype.t) =
     let open Pretype in
     match t1, t2 with
@@ -139,11 +138,8 @@ let rec pretype_eq (t1 : Pretype.t) (t2 : Pretype.t) =
         | PRec (name1, ts1), PRec (name2, ts2) ->
             name1 = name2 && list_eq ty_eq ts1 ts2
         | _, _ -> false
-
-(* Equality on the constituent types of PFun / PRec. Mailbox types need to
-   agree on capability and interface, but their patterns (and
-   quasilinearity) are irrelevant at this stage. Everything else can be
-   compared as a pretype. *)
+(* Equality on the types included in PFun / PRec. Mailbox types need to have
+    same capabilities and interfaces. *)
 and ty_eq (ty1 : Type.t) (ty2 : Type.t) =
     match ty1, ty2 with
         | Type.Mailbox { capability = cap1; interface = iface1; _ },
@@ -155,9 +151,7 @@ and ty_eq (ty1 : Type.t) (ty2 : Type.t) =
  If we were to allow subtyping on other types (e.g., records), we would need
  to expand this. *)
 let check_tys pos_list expected actual =
-    if pretype_eq expected actual then
-        ()
-    else
+    if not (pretype_eq expected actual) then
         Gripers.type_mismatch pos_list expected actual
 
 module PretypeEnv = struct

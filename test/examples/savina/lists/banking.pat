@@ -18,7 +18,7 @@ interface AccountMb {
 }
 
 def spawnAccounts(numsAccounts: List(Int), soFar: Int, acc: List(AccountMb!)) : List(AccountMb!) {
-  case numsAccounts : List(Int) of {
+  case numsAccounts of {
     nil -> acc
     | (n :: ns) ->
         let accountMb = new [AccountMb] in
@@ -57,19 +57,19 @@ def generate_work(tellerMb: TellerMb!, numAccounts: Int, accs : List(AccountMb!)
 
 def pick(accs : List(AccountMb![R]), index : Int, rest : List(AccountMb![R])) : ((Unit + AccountMb![R]) * List(AccountMb![R])) {
 if (index == 0) {
-    case accs : List(AccountMb![R]) of {
+    case accs of {
         nil -> let x = () in (inl(x) : (Unit + AccountMb!), rest)
         | (a :: as) -> (inr(a) : (Unit + AccountMb!), append(rest, as))
     }}
 else {
-    case accs : List(AccountMb![R]) of {
+    case accs of {
         nil ->  let x = () in (inl(x) : (Unit + AccountMb!), rest)
         | (a :: as) -> pick(as, index - 1, (a :: rest))
     }}
 }
 
 def append(l1 : List(AccountMb![R]), l2: List(AccountMb![R])) : List(AccountMb![R]) {
-    case l1 : List(AccountMb![R]) of {
+    case l1 of {
         nil -> l2
         | (a :: as) -> append(as, (a :: l2))
     }
@@ -89,14 +89,14 @@ def choose_dst_acc(tellerMb: TellerMb!, numAccounts: Int, srcAccount: (Unit + Ac
         (pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R]))) : ((Unit + AccountMb!Credit[R]) * List(AccountMb!1[R])))
     in
     let amount = rand(200) in
-    case srcAccount : (Unit + AccountMb!) of {
+    case srcAccount of {
         inl(u1) ->
-            case dstAccount : (Unit + AccountMb!) of {
+            case dstAccount of {
                   inl(u2) -> ()
                 | inr(d)  -> ()
             }
         | inr(a) ->
-            case dstAccount : (Unit + AccountMb!) of {
+            case dstAccount of {
                   inl(u) -> ()
                 | inr(d) -> d ! Credit(tellerMb, amount, a)
         }
@@ -115,7 +115,7 @@ def teller_loop(self: TellerMb?, accountMbs : List(AccountMb!)): Unit {
 }
 
 def stopAccounts(accs: List(AccountMb!)) : Unit {
-    case accs : List(AccountMb!) of {
+    case accs of {
         nil -> ()
         | (a :: as) ->
             a ! Stop();

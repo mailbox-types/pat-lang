@@ -5,7 +5,7 @@
 data NonEmpty a = Singleton a | ConsNE a (NonEmpty a)
 
 def length(xs: NonEmpty(Int), acc: Int): Int {
-    case xs : NonEmpty(Int) of {
+    case xs of {
         Singleton(x) -> acc + 1
       | ConsNE(x, rest) -> length(rest, acc + 1)
     }

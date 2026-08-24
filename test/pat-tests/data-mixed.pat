@@ -6,14 +6,14 @@ data Labeled a = Label String a | Unlabeled a
 data IntTree   = ILeaf Int | INode IntTree IntTree
 
 def sumTree(t: IntTree): Int {
-    case t : IntTree of {
+    case t of {
         ILeaf(n)    -> n
       | INode(l, r) -> sumTree(l) + sumTree(r)
     }
 }
 
 def getLabel(x: Labeled(Int)): String {
-    case x : Labeled(Int) of {
+    case x of {
         Label(s, n) -> s
       | Unlabeled(n) -> "404: Label not found"
     }

@@ -93,6 +93,15 @@ module Gripers = struct
         in
         raise (pretype_error msg [pos])
 
+    let cannot_synth_ctor_arg pos ctor_name prety =
+        let msg =
+            asprintf
+                "Cannot synthesise a type for argument of constructor '%s': its type %a mentions a mailbox type. Please give the constructor a type annotation."
+                ctor_name
+                Pretype.pp prety
+        in
+        raise (pretype_error msg [pos])
+
     let cannot_synth_empty_guards pos () =
         let msg =
             asprintf "Need at least one non-fail guard to synthesise the type for a 'guard' expression."
@@ -107,11 +116,46 @@ module Gripers = struct
 
 end
 
+let list_eq eq xs ys =
+    List.length xs = List.length ys && List.for_all2 eq xs ys
+
+(* Structural equality on pretypes.
+
+   Syntactic equality is too strong: PFun and PRec carry their constituent
+   types as Type.t rather than Pretype.t, so they retain information (in
+   particular, mailbox patterns) which pretyping does not track. Two
+   pretypes which agree as far as pretyping is concerned would then be
+   rejected purely because, say, their mailbox patterns mention different
+   pattern variables. *)
+let rec pretype_eq (t1 : Pretype.t) (t2 : Pretype.t) =
+    let open Pretype in
+    match t1, t2 with
+        | PBase b1, PBase b2 -> b1 = b2
+        | PInterface i1, PInterface i2 -> i1 = i2
+        | PTuple ts1, PTuple ts2 -> list_eq pretype_eq ts1 ts2
+        | PFun { linear = lin1; args = args1; result = res1 },
+          PFun { linear = lin2; args = args2; result = res2 } ->
+            lin1 = lin2 && list_eq ty_eq args1 args2 && ty_eq res1 res2
+        | PRec (name1, ts1), PRec (name2, ts2) ->
+            name1 = name2 && list_eq ty_eq ts1 ts2
+        | _, _ -> false
+
+(* Equality on the constituent types of PFun / PRec. Mailbox types need to
+   agree on capability and interface, but their patterns (and
+   quasilinearity) are irrelevant at this stage. Everything else can be
+   compared as a pretype. *)
+and ty_eq (ty1 : Type.t) (ty2 : Type.t) =
+    match ty1, ty2 with
+        | Type.Mailbox { capability = cap1; interface = iface1; _ },
+          Type.Mailbox { capability = cap2; interface = iface2; _ } ->
+            cap1 = cap2 && iface1 = iface2
+        | _, _ -> pretype_eq (Pretype.of_type ty1) (Pretype.of_type ty2)
+
 (* Note: This basically works since we only have mailbox subtyping at present.
  If we were to allow subtyping on other types (e.g., records), we would need
  to expand this. *)
 let check_tys pos_list expected actual =
-    if expected = actual then
+    if pretype_eq expected actual then
         ()
     else
         Gripers.type_mismatch pos_list expected actual
@@ -176,59 +220,57 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
                 raise (Errors.internal_error "pretypecheck.ml"
                     ("Unknown constructor: " ^ ctor_name))
             | Some (rec_def, ctor_def) ->
-                (* SJF TODO: The existing code was tricky to understand. Rewritten functionally
-                but need to look a little closer... *)
-                (* Try to determine type params by synthesising args. Params
-                   discovered so far are kept as an (index, pretype) assoc list. *)
-                let (params, synth_results) =
-                    List.fold_left (fun (params, synth_results) (arg, src) ->
-                        let (v, ty) = synthesise_val ienv env arg in
-                        let params = match src with
-                            | Recursive_types.Param i ->
-                                (i, ty) :: List.remove_assoc i params
-                            | Recursive_types.Self ->
-                                begin match ty with
-                                | Pretype.PRec (_, ps) ->
-                                    (* Self only fills in params we don't know yet. *)
-                                    List.mapi (fun i p -> (i, p)) ps
-                                    |> List.fold_left (fun params (i, p) ->
-                                        if List.mem_assoc i params then params
-                                        else (i, p) :: params) params
-                                | _ -> params
-                                end
-                            | Recursive_types.Fixed _ -> params
-                        in
-                        (params, (v, ty, src) :: synth_results)
-                    ) ([], []) (List.combine args ctor_def.binder_sources)
-                in
-                let synth_results = List.rev synth_results in
-                (* Check all params are known. Indices are unique by
-                   construction, so param_count of them, all in range,
-                   means we have exactly 0..param_count-1. *)
-                let all_known =
-                    List.length params = rec_def.param_count
-                    && List.for_all (fun (i, _) -> i < rec_def.param_count) params
-                in
-                if not all_known then
-                    Gripers.type_mismatch_with_expected pos
-                        "a fully-determined recursive type" (Pretype.PTuple [])
-                    |> raise;
-                let params =
-                    List.sort (fun (i, _) (j, _) -> Int.compare i j) params
-                    |> List.map snd
-                in
-                let self_ty = Pretype.PRec (rec_def.type_name, params) in
+                (* Try to determine the type params by synthesising the args.
+
+                   An argument whose pretype mentions a mailbox can't resolve
+                   to a Type.t and so it can't fix a parameter by itself.
+                   However, it might be the case that it's recoverable from
+                   elsewhere, e.g. an annotated Nil in a list.
+                   So we record where such an argument was and only report an
+                   error if its parameter is still undetermined once every
+                   argument has been considered. *)
+                let params = Array.make rec_def.param_count None in
+                let blocked = Array.make rec_def.param_count None in
+                List.iter2 (fun arg src ->
+                    let (_, pty) = synthesise_val ienv env arg in
+                    match Pretype.to_type pty, src with
+                    | Some ty, Recursive_types.Param i -> params.(i) <- Some ty
+                    | Some ty, Recursive_types.Self ->
+                        begin match ty with
+                        | Rec (_, ps) ->
+                            List.iteri (fun i p ->
+                                if params.(i) = None then params.(i) <- Some p) ps
+                        | _ -> ()
+                        end
+                    | None, Recursive_types.Param i ->
+                        if blocked.(i) = None then
+                            blocked.(i) <- Some (WithIrMetadata.pos arg, pty)
+                    | Some _, Recursive_types.Fixed _
+                    | None, (Recursive_types.Self | Recursive_types.Fixed _) -> ()
+                ) args ctor_def.binder_sources;
+                (* Check all params are known *)
+                Array.iteri (fun i param ->
+                    if param = None then
+                        match blocked.(i) with
+                        | Some (arg_pos, pty) ->
+                            Gripers.cannot_synth_ctor_arg arg_pos ctor_name pty
+                        | None ->
+                            Gripers.type_mismatch_with_expected pos
+                                "a fully-determined recursive type" (Pretype.PTuple [])
+                            |> raise
+                ) params;
+                let params = Array.to_list (Array.map Option.get params) in
+                let self_ty = Type.Rec (rec_def.type_name, params) in
                 (* Re-check args against expected types *)
-                let checked_args = List.map2 (fun (v, _synth_ty, src) arg ->
+                let checked_args = List.map2 (fun src arg ->
                     let expected = match src with
                         | Recursive_types.Param i -> List.nth params i
                         | Recursive_types.Self -> self_ty
-                        | Recursive_types.Fixed ty -> Pretype.of_type ty
+                        | Recursive_types.Fixed ty -> ty
                     in
-                    ignore v;
-                    check_val ienv env arg expected
-                ) synth_results args in
-                wrap (Inject (ctor_name, checked_args)), self_ty
+                    check_val ienv env arg (Pretype.of_type expected)
+                ) ctor_def.binder_sources args in
+                wrap (Inject (ctor_name, checked_args)), (Pretype.of_type self_ty)
             end
         | Lam { linear; parameters; result_type; body } ->
             (* Defer linearity checking to constraint generation. *)

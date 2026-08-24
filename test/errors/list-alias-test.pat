@@ -17,10 +17,10 @@ def receiver2(mbList: List(Test!), self: Receiver?): Unit {
 }
 
 def receiver3(mbList: List(Test!)): Unit {
-    case mbList: List(Test!) of {
+    case mbList of {
           nil -> ()
         | (x :: xs) ->
-            case xs: List(Test!) of {
+            case xs of {
                 nil -> ()
                 | (y :: ys) ->
                     # x and y are in scope here as separate names, yet

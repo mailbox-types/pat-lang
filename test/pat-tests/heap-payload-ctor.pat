@@ -14,7 +14,7 @@ def main(): Unit {
     guard mb : Msg {
         receive Msg(b) from mb ->
             free(mb);
-            case b : Box(Int) of {
+            case b of {
                 MkBox(n) -> print(intToString(n))
             }
     }

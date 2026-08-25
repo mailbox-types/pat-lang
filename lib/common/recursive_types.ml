@@ -18,17 +18,22 @@ type rec_type_def = {
     constructors: constructor_def list;
 }
 
+let inl_constructor = "Inl"
+let inr_constructor = "Inr"
+let nil_constructor = "Nil"
+let cons_constructor = "Cons"
+
 (* Built-in recursive types *)
 let builtin_rec_types = [
     { type_name = sum_type_name; param_count = 2;
       constructors = [
-          { ctor_name = "Inl"; binder_sources = [Param 0] };
-          { ctor_name = "Inr"; binder_sources = [Param 1] };
+          { ctor_name = inl_constructor; binder_sources = [Param 0] };
+          { ctor_name = inr_constructor; binder_sources = [Param 1] };
       ] };
     { type_name = list_type_name; param_count = 1;
       constructors = [
-          { ctor_name = "Nil"; binder_sources = [] };
-          { ctor_name = "Cons"; binder_sources = [Param 0; Self] };
+          { ctor_name = nil_constructor; binder_sources = [] };
+          { ctor_name = cons_constructor; binder_sources = [Param 0; Self] };
       ] };
 ]
 

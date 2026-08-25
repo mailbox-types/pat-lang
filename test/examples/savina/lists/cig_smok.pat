@@ -31,7 +31,7 @@ def arbiter(self: ArbiterMb?, numRounds: Int): Unit {
   guard self: Start . (StartedSmoking*) {
     receive Start(numSmokers) from self ->
 
-       let (self, smokerMbs) = create_smokers(self, numSmokers, (nil : List(SmokerMb!))) in
+       let (self, smokerMbs) = create_smokers(self, numSmokers, nil) in
 
         let smokerMbs = notify_smoker(numSmokers, smokerMbs) in
         arbiter_loop(self, numSmokers, numRounds, smokerMbs)

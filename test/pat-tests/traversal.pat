@@ -9,7 +9,7 @@ def append(xs : List(Int), ys : List(Int)) : List(Int) {
 
 def traverse(t : Tree(Int)) : List(Int) {
   case t of {
-      Leaf(v)   -> (v :: (nil : List(Int)))
+      Leaf(v)   -> (v :: nil)
     | Node(l,r) -> append(traverse(l), traverse(r))
   }
 }

@@ -1,6 +1,6 @@
 def snoc(xs : List(Int), x : Int): List(Int) {
     case xs of {
-        nil -> (x :: (nil : List(Int)))
+        nil -> (x :: nil)
       | (y :: ys) -> (y :: snoc(ys, x))
     }
 }
@@ -13,7 +13,7 @@ def reverse(xs : List(Int)): List(Int) {
 }
 
 def main(): Unit {
-    let xs = (1 :: (2 :: (3 :: (nil : List(Int))))) in
+    let xs = (1 :: (2 :: (3 :: nil))) in
     case reverse(xs) of {
         nil -> print("nil")
       | (y :: ys) -> print(intToString(y))

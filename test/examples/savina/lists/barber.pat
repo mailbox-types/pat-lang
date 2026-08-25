@@ -6,6 +6,9 @@
 ### The key element of the solution is to make sure that whenever a customer or a barber checks the state
 ### of the waiting room, they always see a valid state. The problem is implemented using a Selector actor
 ### that decides which is the next customer, Customer actors, a Barber actor and a Room actor.
+###
+### As discussed in the JFP paper, it's not possible to encode sleeping barber with the standard aliasing
+### restriction. This will only work with alias checks turned off.
 
 interface RoomMb {
     Enter(CustomerMb!),
@@ -46,7 +49,7 @@ def room(self: RoomMb?, capacity: Int, waiters: List(CustomerMb!), waiting: Int,
             case waiters of {
                 nil ->
                     sleep(5);
-                    room(self, capacity, (nil : List(CustomerMb!)), waiting, barber)
+                    room(self, capacity, nil, waiting, barber)
                 | (a :: as) -> 
                     barber ! Enter(a, self);
                     room(self, capacity, as, (waiting - 1), barber)
@@ -120,7 +123,7 @@ def selector(self: SelectorMb?, generator: Int, haircuts: Int, target: Int, cust
     guard self: (Start + Returned)* {
         free -> ()
         receive Start() from self ->
-            let (self, newCustomers) = spawnCustomers(self, generator, 0, (nil : List(CustomerMb!))) in
+            let (self, newCustomers) = spawnCustomers(self, generator, 0, nil) in
             startCustomers(customers, room);
             selector(self, generator, haircuts, target, newCustomers, room)
         receive Returned(customerMb) from self ->
@@ -178,10 +181,10 @@ def main() : Unit {
     spawn {barber(barberMb)};
 
     let roomMb = new [RoomMb] in
-    spawn {room(roomMb, 2, (nil : List(CustomerMb!)), 0, barberMb)};
+    spawn {room(roomMb, 2, nil, 0, barberMb)};
 
     let selectorMb = new [SelectorMb] in
-    spawn {selector(selectorMb, 4, 0, 6, (nil : List(CustomerMb!)), roomMb)};
+    spawn {selector(selectorMb, 4, 0, 6, nil, roomMb)};
 
     selectorMb ! Start()
 }

@@ -11,7 +11,7 @@ def test(mbs : List(Test!)) : Unit {
 }
 
 def main() : Unit {
-    let mbs = spawnMbs(nil : List(Test!)) in
+    let mbs = spawnMbs(nil) in
     test(mbs);
     print("done")
 }

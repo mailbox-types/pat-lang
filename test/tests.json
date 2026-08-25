@@ -408,6 +408,16 @@
                     ]
                 },
                 {
+                    "name": "Sleeping Barber (lists)",
+                    "filename": "examples/savina/lists/barber.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only",
+                        "--mode",
+                        "none"
+                    ]
+                },
+                {
                     "name": "Big (lists)",
                     "filename": "examples/savina/lists/big.pat",
                     "exit_code": 0,
@@ -781,6 +791,13 @@
                     "exit_code": 0,
                     "stdout": "42\n",
                     "stderr": ""
+                },
+                {
+                    "name": "data-infer",
+                    "filename": "pat-tests/data-infer.pat",
+                    "exit_code": 0,
+                    "stdout": "3\n2\n1\n",
+                    "stderr": ""
                 }
             ]
         },
@@ -905,6 +922,30 @@
                 {
                     "name": "Non-exhaustive case statement",
                     "filename": "errors/case-nonexhaustive.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Inferred type parameters for nullary constructors",
+                    "filename": "pat-tests/data-infer.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Arity error: constructor application",
+                    "filename": "errors/data-ctor-arity.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Arity error: constructor pattern",
+                    "filename": "errors/data-pattern-arity.pat",
                     "exit_code": 1,
                     "args": [
                         "--typecheck-only"

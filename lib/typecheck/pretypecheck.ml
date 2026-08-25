@@ -13,26 +13,50 @@ let pretype_error msg pos_list = Errors.Pretype_error (msg,pos_list)
 module Gripers = struct
     open Format
 
+    (* Agreement helpers, so that we don't report "1 arguments were provided". *)
+    let plural n noun = if n = 1 then noun else noun ^ "s"
+    let was_were n = if n = 1 then "was" else "were"
+
     let arity_error pos expected_len actual_len =
         let msg =
-            asprintf "Arity error. Expects %d arguments, but %d were provided."
-                expected_len
-                actual_len
+            asprintf "Arity error. Expects %d %s, but %d %s provided."
+                expected_len (plural expected_len "argument")
+                actual_len (was_were actual_len)
         in
         raise (pretype_error msg [pos])
 
     let tuple_arity_error pos expected_len actual_len =
         let msg =
-            asprintf "Arity error. Tuple deconstructor has %d binders, but tuple has %d components."
-                expected_len
-                actual_len
+            asprintf "Arity error. Tuple deconstructor has %d %s, but tuple has %d %s."
+                expected_len (plural expected_len "binder")
+                actual_len (plural actual_len "component")
         in
         raise (pretype_error msg [pos])
 
     let message_arity_error pos tag expected_len actual_len =
         let msg =
-            asprintf "Arity error. Message '%s' expects %d arguments, but %d were provided."
-                tag expected_len actual_len
+            asprintf "Arity error. Message '%s' expects %d %s, but %d %s provided."
+                tag
+                expected_len (plural expected_len "argument")
+                actual_len (was_were actual_len)
+        in
+        raise (pretype_error msg [pos])
+
+    let ctor_arity_error pos ctor_name expected_len actual_len =
+        let msg =
+            asprintf "Arity error. Constructor '%s' expects %d %s, but %d %s provided."
+                ctor_name
+                expected_len (plural expected_len "argument")
+                actual_len (was_were actual_len)
+        in
+        raise (pretype_error msg [pos])
+
+    let ctor_pattern_arity_error pos ctor_name expected_len actual_len =
+        let msg =
+            asprintf "Arity error. Pattern for constructor '%s' has %d %s, but the constructor has %d %s."
+                ctor_name
+                actual_len (plural actual_len "binder")
+                expected_len (plural expected_len "argument")
         in
         raise (pretype_error msg [pos])
 
@@ -214,34 +238,69 @@ let rec synthesise_val ienv env value : (value * Pretype.t) =
                 raise (Errors.internal_error "pretypecheck.ml"
                     ("Unknown constructor: " ^ ctor_name))
             | Some (rec_def, ctor_def) ->
-                (* Try to determine the type params by synthesising the args.
+                (* In synthesis mode we need to find a way of instantiating the
+                   type parameters. We often can't synthesise everything, especially
+                   the 'self' references. So try and synthesise the Params.
+                   Workflow: synthesise to try and instantiate params, then
+                   check everything (including 'self') later.
 
-                   An argument whose pretype mentions a mailbox can't resolve
-                   to a Type.t and so it can't fix a parameter by itself.
-                   However, it might be the case that it's recoverable from
-                   elsewhere, e.g. an annotated Nil in a list.
-                   So we record where such an argument was and only report an
-                   error if its parameter is still undetermined once every
-                   argument has been considered. *)
+                   The converse is also true: an argument with a
+                   PInterface pretype, or with a pretype that
+                   contains a mailbox types (e.g. PFun/PRec that contain types),
+                   can't fix a parameter whose pretype mentions a mailbox can't
+                   resolve to a Type.t and so it can't fix a parameter by
+                   itself, but things might be saved by an annotation later in the
+                   structure.  So we record where such an argument was and only
+                   report an error if its parameter is still undetermined once
+                   we've looked at all arguments. *)
+                (* Check arity before we start combining *)
+                let () =
+                    let expected_len = List.length ctor_def.binder_sources in
+                    let actual_len = List.length args in
+                    if expected_len <> actual_len then
+                        Gripers.ctor_arity_error pos ctor_name expected_len actual_len
+                in
                 let params = Array.make rec_def.param_count None in
                 let blocked = Array.make rec_def.param_count None in
-                List.iter2 (fun arg src ->
-                    let (_, pty) = synthesise_val ienv env arg in
-                    match Pretype.to_type pty, src with
-                    | Some ty, Recursive_types.Param i -> params.(i) <- Some ty
-                    | Some ty, Recursive_types.Self ->
-                        begin match ty with
-                        | Rec (_, ps) ->
+                let args_with_srcs = List.combine args ctor_def.binder_sources in
+                let undetermined () = Array.exists (fun p -> p = None) params in
+                (* A `Param` argument fixes its parameter directly. *)
+                List.iter (fun (arg, src) ->
+                    match src with
+                    | Recursive_types.Param i when params.(i) = None ->
+                        let (_, pty) = synthesise_val ienv env arg in
+                        begin match Pretype.to_type pty with
+                        | Some ty -> params.(i) <- Some ty
+                        | None ->
+                            if blocked.(i) = None then
+                                blocked.(i) <- Some (WithIrMetadata.pos arg, pty)
+                        end
+                    | Recursive_types.Param _
+                    | Recursive_types.Self
+                    | Recursive_types.Fixed _ -> ()
+                ) args_with_srcs;
+                (* Any parameter still unknown may yet be recoverable from a
+                   `Self` argument (e.g. the annotated tail of a list). If
+                   synthesising one fails it just means it couldn't tell us
+                   anything, so fall through to the diagnostics below, which
+                   report the argument actually responsible. *)
+                List.iter (fun (arg, src) ->
+                    match src with
+                    | Recursive_types.Self when undetermined () ->
+                        let synthesised =
+                            try Pretype.to_type (snd (synthesise_val ienv env arg))
+                            with Errors.Pretype_error _ -> None
+                        in
+                        begin match synthesised with
+                        | Some (Type.Rec (_, ps)) ->
                             List.iteri (fun i p ->
                                 if params.(i) = None then params.(i) <- Some p) ps
-                        | _ -> ()
+                        | Some _ | None -> ()
                         end
-                    | None, Recursive_types.Param i ->
-                        if blocked.(i) = None then
-                            blocked.(i) <- Some (WithIrMetadata.pos arg, pty)
-                    | Some _, Recursive_types.Fixed _
-                    | None, (Recursive_types.Self | Recursive_types.Fixed _) -> ()
-                ) args ctor_def.binder_sources;
+                    | Recursive_types.Self
+                    | Recursive_types.Param _
+                    | Recursive_types.Fixed _ -> ()
+                ) args_with_srcs;
                 (* Check all params are known *)
                 Array.iteri (fun i param ->
                     if param = None then
@@ -296,6 +355,13 @@ and check_val ienv env value ty =
                 let expected_tys =
                     Recursive_types.instantiate_binder_types params self_ty
                         ctor_def.binder_sources
+                in
+                (* Check arity before we start combining *)
+                let () =
+                    let expected_len = List.length expected_tys in
+                    let actual_len = List.length args in
+                    if expected_len <> actual_len then
+                        Gripers.ctor_arity_error pos ctor_name expected_len actual_len
                 in
                 let checked_args =
                     List.map2
@@ -405,18 +471,28 @@ and synthesise_comp ienv env comp =
                     | Some tys -> List.map Pretype.of_type tys
                     | None -> raise (Gripers.branch_mismatch_with_expected pos prety bname)
             in
+            (* Look up the binder types for a branch, checking arity before we
+               start combining *)
+            let binders_and_tys bname bnds =
+                let tys = lookup_tys bname in
+                let expected_len = List.length tys in
+                let actual_len = List.length bnds in
+                let () =
+                    if expected_len <> actual_len then
+                        Gripers.ctor_pattern_arity_error pos bname expected_len actual_len
+                in
+                List.combine (List.map Var.of_binder bnds) tys
+            in
             (* Type-check each branch *)
             let checked_branches, result_ty =
                 match sorted_branches with
                 | [] -> raise (Gripers.branch_not_enough pos)
                 | (bnds1, e1, s1) :: rest ->
-                    let tys1 = lookup_tys s1 in
-                    let vars_and_tys1 = List.combine (List.map Var.of_binder bnds1) tys1 in
+                    let vars_and_tys1 = binders_and_tys s1 bnds1 in
                     let e1_env = PretypeEnv.bind_many vars_and_tys1 env in
                     let e1, e1_ty = synthesise_comp ienv e1_env e1 in
                     let checked_rest = List.map (fun (bnds, e, sname) ->
-                        let tys = lookup_tys sname in
-                        let vars_and_tys = List.combine (List.map Var.of_binder bnds) tys in
+                        let vars_and_tys = binders_and_tys sname bnds in
                         let e_env = PretypeEnv.bind_many vars_and_tys env in
                         let e = check_comp ienv e_env e e1_ty in
                         (bnds, e, sname)

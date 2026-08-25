@@ -31,7 +31,7 @@ def spawnAccounts(numsAccounts: List(Int), soFar: Int, acc: List(AccountMb!)) : 
 ## main loop.
 def teller(self: TellerMb?, numAccounts : Int, numsAccounts: List(Int)): Unit {
 
-  let accountMbs = spawnAccounts(numsAccounts, 1, (nil : List(AccountMb!))) in
+  let accountMbs = spawnAccounts(numsAccounts, 1, nil) in
   guard self: Start {
     receive Start() from self ->
 
@@ -51,7 +51,7 @@ def generate_work(tellerMb: TellerMb!, numAccounts: Int, accs : List(AccountMb!)
   # Randomly choose source account from which the funds shall be taken.
   let sourceId = rand(numAccounts - 1) in # -1 because rand() is 0-indexed.
 
-  let (choice, rest) = pick(accs, sourceId, (nil : List(AccountMb![R]))) in
+  let (choice, rest) = pick(accs, sourceId, nil) in
   choose_dst_acc(tellerMb, numAccounts, choice, rest)
 }
 
@@ -86,7 +86,7 @@ def choose_dst_acc(tellerMb: TellerMb!, numAccounts: Int, srcAccount: (Unit + Ac
     let dstAccountId = rand(numAccounts - 2) in
   
     let (dstAccount, rest) =
-        pick(dstAccountMbs, dstAccountId, (nil : List(AccountMb![R])))
+        pick(dstAccountMbs, dstAccountId, nil)
     in
     let amount = rand(200) in
     case srcAccount of {
@@ -168,7 +168,7 @@ def account_exit(self: AccountMb?): Unit {
 ## Launcher.
 def main(): Unit {
   let tellerMb = new [TellerMb] in
-  spawn { teller(tellerMb, 3, (200 :: (150 :: (50 :: (nil : List(Int)))))) };
+  spawn { teller(tellerMb, 3, (200 :: (150 :: (50 :: nil)))) };
 
   tellerMb ! Start()
 }

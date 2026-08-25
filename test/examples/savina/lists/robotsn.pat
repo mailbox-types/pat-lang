@@ -138,7 +138,7 @@ def main(n: Int): Unit {
     let door = new[Door] in
     let warehouse = new[Warehouse] in
     spawn { freeDoor(door, warehouse) };
-    spawnRobots(n, door, (nil : List(Robot!)));
+    spawnRobots(n, door, nil);
     spawn { freeWarehouse(warehouse) }
 }
 

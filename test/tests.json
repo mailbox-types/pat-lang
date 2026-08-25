@@ -408,6 +408,16 @@
                     ]
                 },
                 {
+                    "name": "Sleeping Barber (lists)",
+                    "filename": "examples/savina/lists/barber.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only",
+                        "--mode",
+                        "none"
+                    ]
+                },
+                {
                     "name": "Big (lists)",
                     "filename": "examples/savina/lists/big.pat",
                     "exit_code": 0,

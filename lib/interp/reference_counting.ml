@@ -278,9 +278,9 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
                     |> List.map (Var.of_binder << fst)
                     |> VarSet.of_list
             in
+            (* cont_owned: also owns all binders that are free in the cont *)
             let cont_owned = VarSet.(
-                inter owned
-                    (diff cont_fvs binders_set)
+                inter (union owned binders_set) cont_fvs
             )
             in
             (* cont_drop: everything in binders that isn't used in cont *)

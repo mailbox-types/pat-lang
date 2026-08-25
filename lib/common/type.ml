@@ -470,14 +470,12 @@ let make_tuple_type tys =
 
 let make_sum_type ty1 ty2 =
     if Settings.(get liberal_datatypes) then
-        Rec ("Sum", [ty1; ty2])
+        Rec (sum_type_name, [ty1; ty2])
     else
-        Rec ("Sum", [make_returnable ty1; make_returnable ty2])
+        Rec (sum_type_name, [make_returnable ty1; make_returnable ty2])
 
-(* SJF TODO: Once we've broken Type<->Recursive_types dependency, call into Recursive_types here rather than duplicating *)
-let list_ty_name = "List"
 let is_list = function
-    | Rec (s, _) -> String.equal s list_ty_name
+    | Rec (s, _) -> String.equal s list_type_name
     | _ -> false
 
-let make_list_type ty = Rec ("List", [ty])
+let make_list_type ty = Rec (list_type_name, [ty])

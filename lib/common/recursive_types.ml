@@ -1,9 +1,7 @@
 (* Central registry of recursive type definitions.
    User-defined types (from `data` decls)
    added at parse time via [register]. *)
-
-(* SJF TODO: Can we break the dependency between this and Type.ml -- perhaps by making Fixed refer to a CommonTypes.Base only? *)
-
+open Common_types
 type binder_source =
     | Param of int    (* the i-th type parameter *)
     | Self            (* the recursive type itself *)
@@ -19,9 +17,6 @@ type rec_type_def = {
     param_count: int;
     constructors: constructor_def list;
 }
-
-let list_type_name = "List"
-let sum_type_name = "Sum"
 
 (* Built-in recursive types *)
 let builtin_rec_types = [

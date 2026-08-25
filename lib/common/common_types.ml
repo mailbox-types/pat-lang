@@ -58,3 +58,7 @@ module Constant = struct
         | Bool b -> b
         | _ -> raise (Errors.type_error "unwrap_bool on non-bool" pos_list)
 end
+
+(* Utility functions *)
+let list_type_name = "List"
+let sum_type_name = "Sum"

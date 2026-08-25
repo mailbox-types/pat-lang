@@ -515,6 +515,13 @@
                     "exit_code": 0,
                     "stdout_regex": "^(?:heads\\n)*tails\\n$",
                     "stderr": ""
+                },
+                {
+                    "name": "Fibonacci with Pairs (Savina)",
+                    "filename": "examples/savina/fib_pairs.pat",
+                    "exit_code": 0,
+                    "stdout": "5\n",
+                    "stderr": ""
                 }
             ]
         },
@@ -766,6 +773,13 @@
                     "filename": "pat-tests/heap-arg-lambda.pat",
                     "exit_code": 0,
                     "stdout": "6\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "lettuple-counting",
+                    "filename": "pat-tests/lettuple-counting.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n",
                     "stderr": ""
                 }
             ]

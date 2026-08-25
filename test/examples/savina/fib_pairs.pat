@@ -44,4 +44,4 @@ def mainFibActor(n: Int): Int {
             x
     }
 }
-mainFibActor(5)
+print(intToString(mainFibActor(5)))

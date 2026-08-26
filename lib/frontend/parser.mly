@@ -247,7 +247,7 @@ type_annot:
 branch:
     | ctor_name LEFT_PAREN separated_list(COMMA, VARIABLE) RIGHT_PAREN RIGHTARROW expr { ($3, $6, $1) }
     | ctor_name RIGHTARROW expr { ([], $3, $1) }
-    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, "Cons") }
+    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, Recursive_types.cons_constructor) }
 
 expr:
     (* Let *)

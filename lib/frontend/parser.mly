@@ -247,7 +247,7 @@ type_annot:
 branch:
     | ctor_name LEFT_PAREN separated_list(COMMA, VARIABLE) RIGHT_PAREN RIGHTARROW expr { ($3, $6, $1) }
     | ctor_name RIGHTARROW expr { ([], $3, $1) }
-    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, "Cons") }
+    | LEFT_PAREN VARIABLE CONS VARIABLE RIGHT_PAREN RIGHTARROW expr { ([$2; $4], $7, Recursive_types.cons_constructor) }
 
 expr:
     (* Let *)
@@ -271,6 +271,18 @@ linearity:
     | FUN    { false }
     | LINFUN { true }
 
+list_lit:
+    | LEFT_BRACK separated_list(COMMA, expr) RIGHT_BRACK { 
+        List.fold_right
+            (fun x acc ->
+                with_pos_from_positions
+                    (get_start_pos x)
+                    (get_end_pos x)
+                    (Inject (Recursive_types.cons_constructor, [x; acc])))
+            $2
+            (with_pos_from_positions $endpos $endpos (Inject (Recursive_types.nil_constructor, [])))
+    }
+
 basic_expr:
     | ctor_name LEFT_PAREN separated_list(COMMA, expr) RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ($1, $3) )}
     | ctor_name { with_pos_from_positions $startpos $endpos ( Inject ($1, []) )}
@@ -285,7 +297,8 @@ basic_expr:
     (* Sugared Fail forms *)
     | FAIL LEFT_PAREN expr RIGHT_PAREN LEFT_BRACK ty RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( SugarFail ($3, $6))}
     | tuple_exprs { with_pos_from_positions $startpos $endpos ( Tuple $1 ) }
-    | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject ("Cons", [$2; $4]) ) }
+    | list_lit { $1 }
+    | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject (Recursive_types.cons_constructor, [$2; $4]) ) }
     (* App *)
     | fact LEFT_PAREN expr_list RIGHT_PAREN
         { with_pos_from_positions $startpos $endpos (

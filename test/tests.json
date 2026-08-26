@@ -630,6 +630,13 @@
                     "stderr": ""
                 },
                 {
+                    "name": "list-lit",
+                    "filename": "pat-tests/list-lit.pat",
+                    "exit_code": 0,
+                    "stdout": "1\n4\n3\n16\n5\n",
+                    "stderr": ""
+                },
+                {
                     "name": "Tree traversal",
                     "filename": "pat-tests/traversal.pat",
                     "exit_code": 0

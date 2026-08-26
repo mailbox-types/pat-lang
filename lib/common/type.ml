@@ -261,7 +261,6 @@ type t =
         umb_interface: string;
         umb_quasilinearity: (Quasilinearity.t [@name "quasilinearity"]) option;
         umb_pattern: (Pattern.t [@name "pattern"]) option
-
     }
     (* Mailbox type after desugaring, or produced during TC *)
     | Mailbox of {

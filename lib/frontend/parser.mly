@@ -271,7 +271,6 @@ linearity:
     | FUN    { false }
     | LINFUN { true }
 
-(* let with_pos_from_positions p1 p2 newE = ParserPosition.with_pos (p1, p2) newE *)
 list_lit:
     | LEFT_BRACK separated_list(COMMA, expr) RIGHT_BRACK { 
         List.fold_right

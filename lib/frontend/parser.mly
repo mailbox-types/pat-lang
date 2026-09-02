@@ -294,8 +294,8 @@ basic_expr:
     | SPAWN LEFT_BRACE expr RIGHT_BRACE { with_pos_from_positions $startpos $endpos ( Spawn $3 )}
     (* Free *)
     | FREE LEFT_PAREN expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Free $3 )}
-    (* Sugared Fail forms *)
-    | FAIL LEFT_PAREN expr RIGHT_PAREN LEFT_BRACK ty RIGHT_BRACK { with_pos_from_positions $startpos $endpos ( SugarFail ($3, $6))}
+    (* Fail *)
+    | FAIL LEFT_PAREN expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Fail $3 )}
     | tuple_exprs { with_pos_from_positions $startpos $endpos ( Tuple $1 ) }
     | list_lit { $1 }
     | LEFT_PAREN expr CONS expr RIGHT_PAREN { with_pos_from_positions $startpos $endpos ( Inject (Recursive_types.cons_constructor, [$2; $4]) ) }
@@ -365,7 +365,6 @@ fact:
 
 
 guard:
-    | FAIL COLON ty { with_pos_from_positions $startpos $endpos ( Fail $3) }
     | EMPTY LEFT_PAREN VARIABLE RIGHT_PAREN RIGHTARROW expr { with_pos_from_positions $startpos $endpos (Empty ($3, $6)) }
     | FREE RIGHTARROW expr { with_pos_from_positions $startpos $endpos (GFree $3) }
     | RECEIVE message_binder FROM VARIABLE RIGHTARROW expr

@@ -146,6 +146,10 @@ and let_insert (comp : comp) : comp =
             let (bindings, v') = let_bind_value v in
             insert_let_bindings bindings
                 (WithIrMetadata.make ~fvs:(get_fvs v') (Free (v', iname)))
+        | Fail (v, iname) ->
+            let (bindings, v') = let_bind_value v in
+            insert_let_bindings bindings
+                (WithIrMetadata.make ~fvs:(get_fvs v') (Fail (v', iname)))
         | Guard { target; pattern; guards; iname } ->
             let (bindings, target') = let_bind_value target in
             let guards' = List.map let_insert_guard guards in
@@ -157,7 +161,6 @@ and let_insert_guard (guard : guard) : guard =
     match WithIrMetadata.node guard with
         | Receive r -> WithIrMetadata.make ~fvs:(get_fvs guard) (Receive { r with cont = let_insert r.cont })
         | Empty (b, c) -> WithIrMetadata.make ~fvs:(get_fvs guard) (Empty (b, let_insert c))
-        | Fail -> guard
 
 let runtime_error err =
     raise <| Errors.internal_error "reference_counting.ml" err
@@ -357,6 +360,9 @@ let rec insert_reference_counting_comp decls borrowed owned comp : Evaluation_ir
         | Free (v, iname) ->
             let (dups, v') = ircv borrowed owned v in
             insert_dup dups (Evaluation_ir.Free (v', Option.get iname))
+        | Fail (v, iname) ->
+            let (dups, v') = ircv borrowed owned v in
+            insert_dup dups (Evaluation_ir.Fail (v', Option.get iname))
         | Guard { target; pattern; guards; iname } ->
             let guards_fvs =
                 List.fold_left
@@ -483,8 +489,6 @@ and insert_reference_counting_guard decls borrowed guards_owned guard : Evaluati
             let translated_e = irc borrowed e_owned e in
             let final_e = mk_var_drop e_drop translated_e in
             Evaluation_ir.Empty (binder, final_e)
-        | Fail ->
-            Evaluation_ir.Fail
 
 let insert_reference_counting prog : Evaluation_ir.program =
     let decls =

@@ -22,8 +22,7 @@ let no_fvs ?(pos = Position.dummy) v = WithIrMetadata.make ~pos ~fvs:(VarSet.emp
 (* Transforms the sugared AST to the FGCBV IR *)
 (* Takes a rather naive approach by assigning each subexpression
  * to a variable. We can likely do some administrative reductions
- * on the fly a little later.
- *)
+ * on the fly a little later. *)
 
 (* Maps source-level variable names to runtime IR variables.
    decl_var_env stores top-level declaration variables. *)
@@ -217,31 +216,6 @@ and transform_expr :
                         binders;
                         tuple = v;
                         cont = cont' }))
-(* OLD:
-        | Case {
-            branch1 = ((bnd1, ty1), comp1);
-            branch2 = ((bnd2, ty2), comp2) } ->
-            transform_subterm decls env term (fun env v ->
-                let (ir_bnd1, env1) = add_name env bnd1 in
-                let (ir_bnd2, env2) = add_name env bnd2 in
-                let comp1' = transform_expr decls env1 comp1 id in
-                let comp2' = transform_expr decls env2 comp2 id in
-                let fvs =
-                    VarSet.union_many 
-                        [
-                            (get_fvs v);
-                            (VarSet.remove (Var.of_binder ir_bnd1) (get_fvs comp1') );
-                            (VarSet.remove (Var.of_binder ir_bnd2) (get_fvs comp2') );
-                        ]
-                in
-                with_fvs fvs (
-                Ir.Case {
-                    term = v;
-                    branch1 = (ir_bnd1, ty1), comp1';
-                    branch2 = (ir_bnd2, ty2), comp2';
-                }) |> k env)
-*)
-
         | Case {
             term;
             branches } ->
@@ -300,6 +274,9 @@ and transform_expr :
         | Free e ->
             transform_subterm decls env e (fun _ v ->
                 with_val_fvs v (Ir.Free (v, None))) |> k env
+        | Fail e ->
+            transform_subterm decls env e (fun _ v ->
+                with_val_fvs v (Ir.Fail (v, None))) |> k env
         | Send {target; message; iname} ->
             let (tag, payloads) = message in
             transform_subterm decls env target (fun env pid ->
@@ -324,8 +301,7 @@ and transform_expr :
                     guards = gs;
                     iname
                 }) |> k env )
-        |  SugarFail (_, _) -> (* shouldn't ever match *)
-                raise (Errors.internal_error "sugar_to_ir.ml" "Encountered SugarFail expression during the IR translation stage")
+
 (* Transforms an expression into a syntactic value, if possible *)
 and transform_syntactic_value
     (decls: Sugar_ast.decl list)
@@ -430,7 +406,6 @@ and transform_guard :
     Sugar_ast.guard -> Ir.guard = fun decls env x ->
     let pos = WithPos.pos x in
     let with_fvs fvs node = with_fvs ~pos fvs node in
-    let no_fvs node = no_fvs ~pos node in
     let guard_node = WithPos.node x in
     match guard_node with
     | Receive { tag; payload_binders; mailbox_binder; strategy; cont } ->
@@ -453,8 +428,6 @@ and transform_guard :
         let fvs = VarSet.remove (Var.of_binder mailbox_bnd) (get_fvs cont) in
         with_fvs fvs (Ir.Empty (mailbox_bnd, cont))
     | GFree _ -> raise (Errors.internal_error "sugar_to_ir.ml" "Encountered Free guard during the IR translation stage")
-    (* type will have been expanded into an annotation by this point *)
-    | Fail _ -> no_fvs Ir.Fail
 
 and transform_list :
     Sugar_ast.decl list ->

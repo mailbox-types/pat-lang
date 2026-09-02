@@ -222,7 +222,7 @@
                     ]
                 },
                 {
-                    "name": "Future with explicit fail guard",
+                    "name": "Future with fail construct",
                     "filename": "examples/de_liguoro_padovani/futurefail.pat",
                     "exit_code": 0,
                     "args": [
@@ -510,6 +510,13 @@
                     "filename": "eval-tests/spawn_handshake.pat",
                     "exit_code": 0,
                     "stdout": "done\n",
+                    "stderr": ""
+                },
+                {
+                    "name": "Fail branch not taken",
+                    "filename": "eval-tests/fail-not-taken.pat",
+                    "exit_code": 0,
+                    "stdout": "42\n",
                     "stderr": ""
                 },
                 {
@@ -1078,6 +1085,115 @@
                 {
                     "name": "Additional non-supported free guard",
                     "filename": "errors/pat_constr4.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                }
+            ]
+        },
+        {
+            "group": "Fail construct",
+            "tests": [
+                {
+                    "name": "Fail on an explicitly unreliable mailbox",
+                    "filename": "pat-tests/fail-unreliable.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail in a receive guard for an impossible message",
+                    "filename": "pat-tests/fail-guard.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail checks at any result type",
+                    "filename": "pat-tests/fail-any-type.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Multiple fail branches in one guard",
+                    "filename": "pat-tests/fail-multiple.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail in a nested expression position",
+                    "filename": "pat-tests/fail-nested.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Unannotated fail as a guard body",
+                    "filename": "pat-tests/fail-unannotated-guard.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail on a reliable empty mailbox (?1)",
+                    "filename": "errors/fail-reliable.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail on a message present in the guard pattern",
+                    "filename": "errors/fail-in-pattern.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail with a non-zero residual pattern",
+                    "filename": "errors/fail-pattern-residual.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail on an output capability",
+                    "filename": "errors/fail-output-cap.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail on a non-mailbox subject",
+                    "filename": "errors/fail-not-mailbox.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail without an annotation in a synthesis position",
+                    "filename": "errors/fail-no-annotation.pat",
+                    "exit_code": 1,
+                    "args": [
+                        "--typecheck-only"
+                    ]
+                },
+                {
+                    "name": "Fail does not discharge other linear variables",
+                    "filename": "errors/fail-linear-abandon.pat",
                     "exit_code": 1,
                     "args": [
                         "--typecheck-only"

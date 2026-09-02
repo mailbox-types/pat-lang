@@ -65,8 +65,7 @@ and expr_node =
         iname: string option
     }
     | Free of expr
-    (* fail(e)[A], desugars to (guard e : 0 { fail } : A) *)
-    | SugarFail of expr * (Type.t [@name "ty"])
+    | Fail of expr
 and constant =
     [%import: Common_types.Constant.t]
 and sugar_var = string
@@ -85,9 +84,6 @@ and guard_node =
     }
     | GFree of expr
     | Empty of (sugar_var * expr)
-    (* For now, require annotation since Fail can have any type *)
-    (* It would be nice to get rid of this later. *)
-    | Fail of (Type.t[@name "ty"])
 and decl = {
     decl_name: string;
     decl_parameters: (string * (Type.t[@name "ty"])) list;
@@ -115,10 +111,6 @@ let is_free_guard = function
 
 let is_empty_guard = function
     | Empty _ -> true
-    | _ -> false
-
-let is_fail_guard = function
-    | Fail _ -> true
     | _ -> false
 
 (* Pretty-printing of the AST *)
@@ -244,7 +236,7 @@ and pp_expr ppf expr_with_pos =
             Type.Pattern.pp pattern
             (pp_print_newline_list pp_guard) guards
     | Free e -> fprintf ppf "free(%a)" pp_expr e
-    | SugarFail (e, ty) -> fprintf ppf "fail(%a)[%a]" pp_expr e Type.pp ty
+    | Fail e -> fprintf ppf "fail(%a)" pp_expr e
 and pp_guard ppf guard_with_node =
     let guard_node = WithPos.node guard_with_node in
     match guard_node with
@@ -268,8 +260,6 @@ and pp_guard ppf guard_with_node =
         fprintf ppf "free ->@,  @[<v>%a@]" pp_expr e
     | Empty (x, e) ->
         fprintf ppf "empty(%s) ->@,  @[<v>%a@]" x pp_expr e
-    | Fail ty ->
-        fprintf ppf "fail[%a]" Type.pp ty
 
 (* Probably prettier ways of doing this... *)
 let show_program prog = asprintf "%a" pp_program prog

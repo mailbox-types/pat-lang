@@ -762,7 +762,11 @@ and check_guards :
                     else
                       (empty, tag :: tags)
             ) (false, []) gs in
-          (* *)
+
+          (* Guards won't be empty (we check this in pretyping but might as well
+            double-check here), and since we're using branching merge we
+            need to seed the fold with an actual environment rather than an empty
+            one. *)
           let ((fst_env, fst_pat, fst_constrs), rest) =
             match gs with
                 | [] -> Gripers.empty_guard gpos

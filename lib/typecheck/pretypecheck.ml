@@ -646,8 +646,8 @@ and check_comp ienv env comp ty  =
                     Gripers.type_mismatch_with_expected pos "a mailbox type" prety
             end
         | Guard { target; pattern; guards; _ } ->
-            (* With an expected type in hand, every branch can be checked, so a
-               branch whose body only has a checking rule needs no annotation. *)
+            (* Synth target (to get interface name from pretype env) but can check 
+                every branch (meaning we don't lose type information) *)
             let (target, iname) = synth_guard_target ienv env pos target in
             let guards = List.map (fun g -> check_guard ienv env iname g ty) guards in
             wrap (Guard { target; pattern; guards; iname = Some iname })
@@ -655,12 +655,13 @@ and check_comp ienv env comp ty  =
             let comp, inferred_ty = synthesise_comp ienv env comp in
             check_tys [pos] ty inferred_ty;
             comp
-(* Binder structure shared by synthesising and checking a guard: performs the
-   arity check, binds the payloads and mailbox, and returns the extended
-   environment, the continuation, and a function rebuilding the guard around a
-   checked continuation. Only the treatment of the continuation differs between
-   the two modes, so it is the only thing left to the caller. *)
-and guard_parts ienv env iname g =
+(* We want to be able to both synth and check guards. Synth to allow us to infer types if possible,
+    check to allow us to retain contextual type info. We have to do some common stuff in each case:
+    extend env with payload types and updated MB, and re-wrap continuations. This function
+    does all of this, returning an environment (for checking/synthing the body of the guard),
+    the continuation we need to check, and creates a callback function to re-wrap the checked/synthed
+    body in the guard *)
+and get_guard_body ienv env iname g =
     let interface_withPos = IEnv.lookup iname ienv [WithIrMetadata.pos g] in
     let iface = WithPos.node interface_withPos in
     let pos = WithIrMetadata.pos g in
@@ -698,15 +699,12 @@ and guard_parts ienv env iname g =
             let rebuild e = wrap (Empty (x, e)) in
             (env, e, rebuild)
 and synth_guard ienv env iname g =
-    let (env, cont, rebuild) = guard_parts ienv env iname g in
+    let (env, cont, rebuild) = get_guard_body ienv env iname g in
     let cont, cont_ty = synthesise_comp ienv env cont in
     rebuild cont, cont_ty
-(* Checks a guard against a known type, pushing the check into the
-   continuation rather than synthesising it and comparing afterwards. This
-   lets constructs that only have a checking rule -- `fail` -- appear
-   directly as a guard body. *)
+(* Avoids losing contextual type info (e.g. for `fail` construct) *)
 and check_guard ienv env iname g ty =
-    let (env, cont, rebuild) = guard_parts ienv env iname g in
+    let (env, cont, rebuild) = get_guard_body ienv env iname g in
     rebuild (check_comp ienv env cont ty)
 
 (* Top-level typechecker *)

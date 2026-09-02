@@ -176,6 +176,7 @@ and comp_node =
         iname: string option
       }
     | Free of (value * string option)
+    | Fail of (value * string option)
     | Guard of {
         target: value;
         pattern: (Type.Pattern.t[@name "pattern"]);
@@ -217,7 +218,6 @@ and receive_guard = {
 and guard_node =
     | Receive of receive_guard
     | Empty of ((Binder.t[@name "binder"]) * comp)
-    | Fail
     [@@deriving visitors {
         variety = "map";
         ancestors = [
@@ -314,6 +314,8 @@ and pp_comp ppf comp_with_pos =
     | Return v -> pp_value ppf v
     | Free (v, _) ->
             fprintf ppf "free(%a)" pp_value v
+    | Fail (v, _) ->
+            fprintf ppf "fail(%a)" pp_value v
     | If { test; then_expr; else_expr } ->
             fprintf ppf "if (%a) {@[<v>%a@]} else {@[<v>%a@]}}"
             pp_value test
@@ -397,8 +399,6 @@ and pp_guard ppf guard_with_pos =
             pp_comp cont
     | Empty (x, e) ->
         fprintf ppf "empty(%a) ->@,  @[<v>%a@]" Binder.pp x pp_comp e
-    | Fail ->
-        fprintf ppf "fail"
 
 let unit = Tuple []
 
@@ -408,11 +408,6 @@ let is_receive_guard = function
 
 let is_free_guard = function
     | Free _ -> true
-    | _ -> false
-
-let is_fail_guard guard =
-    match WithIrMetadata.node guard with
-    | Fail -> true
     | _ -> false
 
 (* Substitutes a pattern solution through the program *)

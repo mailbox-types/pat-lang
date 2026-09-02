@@ -13,7 +13,7 @@ def resolvedFuture(self: Future?, value: Int): Unit {
         receive Get(user) from self ->
             user ! Reply(value);
             resolvedFuture(self, value)
-        receive Put(x) from self -> fail(self)[Unit]
+        receive Put(x) from self -> fail(self)
     }
 }
 

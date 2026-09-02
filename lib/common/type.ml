@@ -315,6 +315,21 @@ let mailbox_send_unit interface quasilinearity =
         quasilinearity
     }
 
+let mailbox_receive_unit interface quasilinearity =
+    Mailbox {
+        capability = Capability.In;
+        interface;
+        pattern = Pattern.One;
+        quasilinearity
+    }
+let mailbox_receive_unreliable interface quasilinearity =
+    Mailbox {
+        capability = Capability.In;
+        interface;
+        pattern = Pattern.Zero;
+        quasilinearity
+    }
+
 let rec pp ppf =
   let open Format in
   function

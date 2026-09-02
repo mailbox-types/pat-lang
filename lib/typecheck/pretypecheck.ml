@@ -134,7 +134,7 @@ module Gripers = struct
 
     let cannot_synth_fail pos () =
         let msg =
-            asprintf "Cannot synthesise a type for a 'fail' guard."
+            asprintf "Cannot synthesise a type for a 'fail' construct."
         in
         raise (pretype_error msg [pos])
 
@@ -607,29 +607,29 @@ and synthesise_comp ienv env comp =
                     | t -> Gripers.type_mismatch_with_expected pos "an interface type" t
             in
             wrap (Free (v, Some iface)), Pretype.unit
+        | Fail _ ->
+            Gripers.cannot_synth_fail pos ()
         | Guard { target; pattern; guards; _ } ->
-            let (target, target_ty) = synthv target in
-            let iname =
-                match target_ty with
-                    | PInterface iname -> iname
-                    | t -> Gripers.type_mismatch_with_expected pos "an interface type" t
-            in
-            (* We can synthesise the type of a guard expression as long as it is
-               not a unary 'fail' guard, in which case we need an annotation. *)
-            let non_fail_guards = List.filter (not << is_fail_guard) guards
-            in
+            let (target, iname) = synth_guard_target ienv env pos target in
+            (* Without an expected type we must synthesise one from somewhere,
+               so the first guard has to be synthesisable; the rest are then
+               checked against it. *)
             let guards, g_ty =
-                match non_fail_guards with
+                match guards with
                     | [] ->
                         Gripers.cannot_synth_empty_guards pos ()
                     | g :: gs ->
                         let g, g_ty = synth_guard ienv env iname g in
                         let gs =
-                            List.map (fun g -> check_guard pos ienv env iname g g_ty) gs
+                            List.map (fun g -> check_guard ienv env iname g g_ty) gs
                         in
                         g :: gs, g_ty
             in
             wrap (Guard { target; pattern; guards; iname = Some iname }), g_ty
+and synth_guard_target ienv env pos target =
+    match synthesise_val ienv env target with
+        | (target, PInterface iname) -> (target, iname)
+        | (_, t) -> Gripers.type_mismatch_with_expected pos "an interface type" t
 and check_comp ienv env comp ty  =
     let pos = WithIrMetadata.pos comp in
     let fvs = WithIrMetadata.fvs comp in
@@ -638,19 +638,29 @@ and check_comp ienv env comp ty  =
         | Return v ->
             let v = check_val ienv env v ty in
             wrap (Return v)
-        | Guard { target; pattern; guards; _ } when guards = [(WithIrMetadata.make ~pos ~fvs:VarSet.empty Fail)] ->
-            let target, target_ty = synthesise_val ienv env target in
-            let iname =
-                match target_ty with
-                    | PInterface iname -> iname
-                    | t -> Gripers.type_mismatch_with_expected pos "an interface type" t
-            in
-            wrap (Guard { target; pattern; guards = [(WithIrMetadata.make ~pos ~fvs:VarSet.empty Fail)]; iname = Some iname })
+        | Fail (mb, _) -> 
+            begin match synthesise_val ienv env mb with
+                | (mb, PInterface iface) ->
+                    wrap (Fail (mb, Some iface))
+                | (_, prety) ->
+                    Gripers.type_mismatch_with_expected pos "a mailbox type" prety
+            end
+        | Guard { target; pattern; guards; _ } ->
+            (* With an expected type in hand, every branch can be checked, so a
+               branch whose body only has a checking rule needs no annotation. *)
+            let (target, iname) = synth_guard_target ienv env pos target in
+            let guards = List.map (fun g -> check_guard ienv env iname g ty) guards in
+            wrap (Guard { target; pattern; guards; iname = Some iname })
         | _ ->
             let comp, inferred_ty = synthesise_comp ienv env comp in
             check_tys [pos] ty inferred_ty;
             comp
-and synth_guard ienv env iname g =
+(* Binder structure shared by synthesising and checking a guard: performs the
+   arity check, binds the payloads and mailbox, and returns the extended
+   environment, the continuation, and a function rebuilding the guard around a
+   checked continuation. Only the treatment of the continuation differs between
+   the two modes, so it is the only thing left to the caller. *)
+and guard_parts ienv env iname g =
     let interface_withPos = IEnv.lookup iname ienv [WithIrMetadata.pos g] in
     let iface = WithPos.node interface_withPos in
     let pos = WithIrMetadata.pos g in
@@ -679,18 +689,25 @@ and synth_guard ienv env iname g =
                     (Var.of_binder mailbox_binder)
                     (Pretype.PInterface iname)
             in
-            let cont, cont_ty = synthesise_comp ienv env cont in
-            wrap (Receive { tag; payload_binders; mailbox_binder; strategy; cont }), cont_ty
+            let rebuild cont =
+                wrap (Receive { tag; payload_binders; mailbox_binder; strategy; cont })
+            in
+            (env, cont, rebuild)
         | Empty (x, e) ->
             let env = PretypeEnv.bind (Var.of_binder x) (Pretype.PInterface iname) env in
-            let e, e_ty = synthesise_comp ienv env e in
-            wrap (Empty (x, e)), e_ty
-        | Fail ->
-            Gripers.cannot_synth_fail pos ()
-and check_guard pos ienv env iname g ty =
-    let g, inferred_ty = synth_guard ienv env iname g in
-    check_tys [pos] ty inferred_ty;
-    g
+            let rebuild e = wrap (Empty (x, e)) in
+            (env, e, rebuild)
+and synth_guard ienv env iname g =
+    let (env, cont, rebuild) = guard_parts ienv env iname g in
+    let cont, cont_ty = synthesise_comp ienv env cont in
+    rebuild cont, cont_ty
+(* Checks a guard against a known type, pushing the check into the
+   continuation rather than synthesising it and comparing afterwards. This
+   lets constructs that only have a checking rule -- `fail` -- appear
+   directly as a guard body. *)
+and check_guard ienv env iname g ty =
+    let (env, cont, rebuild) = guard_parts ienv env iname g in
+    rebuild (check_comp ienv env cont ty)
 
 (* Top-level typechecker *)
 let check { prog_interfaces; prog_decls; prog_body } =

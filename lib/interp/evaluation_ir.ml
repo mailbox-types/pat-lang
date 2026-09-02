@@ -56,6 +56,7 @@ and comp =
         iname: string
       }
     | Free of (value * string)
+    | Fail of (value * string)
     | Guard of {
         target: value;
         pattern: Type.Pattern.t;
@@ -90,7 +91,6 @@ and constant = Constant.t
 and guard =
     | Receive of receive_guard
     | Empty of (Binder.t * comp)
-    | Fail
 and receive_guard = {
         tag: string;
         payload_binders: Binder.t list;
@@ -170,6 +170,8 @@ and pp_comp ppf comp =
         end
     | Free (v, _iname) ->
         fprintf ppf "free(%a)" pp_value v
+    | Fail (v, _iname) ->
+        fprintf ppf "fail(%a)" pp_value v
     | Guard { target; pattern; guards; _ } ->
         fprintf ppf
             "guard %a : %a {@,@[<v 2>  %a@]@,}"
@@ -221,5 +223,3 @@ and pp_guard ppf guard =
             pp_comp cont
     | Empty (x, e) ->
         fprintf ppf "empty(%a) ->@,  @[<v>%a@]" Binder.pp x pp_comp e
-    | Fail ->
-        fprintf ppf "fail"

@@ -83,11 +83,10 @@ let multiple_empty () pos_list =
     raise (constraint_gen_error
         ~subsystem:(Errors.GenCheckGuard)
         "At most one `empty` guard allowed." pos_list)
-
-let multiple_fail () pos_list =
+let empty_guard pos =
     raise (constraint_gen_error
         ~subsystem:(Errors.GenCheckGuard)
-        "At most one `fail` guard allowed." pos_list)
+        "A guard expression must have at least one guard." [pos])
 
 let multiple_receive tag pos_list =
     let msg =

@@ -501,6 +501,9 @@ let rec step_current runtime state =
       let rt_name = runtime_name_of_value state.env target in
       Runtime.free_mailbox runtime rt_name;
       return_unit state
+    | Fail (target, _iname) ->
+      let rt_name = runtime_name_of_value state.env target in
+      runtime_error (Format.asprintf "Encountered Fail expression for mailbox %a" RuntimeName.pp rt_name)
     | Dup vars ->
       let names = 
         List.concat_map (fun (value, c) ->

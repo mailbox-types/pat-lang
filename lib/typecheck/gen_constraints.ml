@@ -689,7 +689,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
             let open Type in
             (* Check guard types, and generate constraints, and pattern for guards *)
             let (guards_env, guards_pat, guards_constrs) =
-                check_guards ienv decl_env iname pattern guards ty in
+                check_guards ienv decl_env iname pattern guards ty pos in
             (* Check to see whether the MB handle can be given a type that's
                compatible with the synthesised pattern. *)
             let target_ty = Mailbox {
@@ -706,7 +706,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                 chkv target (Type.make_returnable target_ty)
             in
             let (env, env_constrs) =
-                Nullable_env.combine ienv target_env guards_env pos
+                Ty_env.combine ienv target_env guards_env pos
             in
             (* The pattern annotation must be *included* in the inferred pattern.
                The reason this is inclusion rather than equivalence is that we
@@ -726,6 +726,10 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                      pat_constrs]
             in
             (env, constrs)
+        | Fail (mb, Some iface) ->
+            (* Fail checks at any given type, as long as `e` checks as an unreliable mailbox *)
+            chkv mb (Type.mailbox_receive_unreliable iface Type.Quasilinearity.Returnable)
+        | Fail (_, _) -> assert false
         | _ ->
             (* If we don't have a checking rule, it might be possible to
                synthesise and then check the result. *)
@@ -738,33 +742,35 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
  * returns the intersection of the resulting environments and generated pattern. *)
 and check_guards :
     IEnv.t -> Ty_env.t -> interface_name -> Type.Pattern.t -> Ir.guard list ->
-        Type.t -> Nullable_env.t * Type.Pattern.t * Constraint_set.t =
-        fun ienv decl_env iname guard_pat gs ty ->
+        Type.t -> Position.t -> Ty_env.t * Type.Pattern.t * Constraint_set.t =
+        fun ienv decl_env iname guard_pat gs ty gpos ->
           let open Ir in
           let open Type in
           (* Do a duplication check on guards *)
           let _ =
-            List.fold_left (fun (empty, fail, tags) x ->
+            List.fold_left (fun (empty, tags) x ->
               let pos = WithIrMetadata.pos x in
               match WithIrMetadata.node x with
                 | Empty _ ->
                     if empty then
                       Gripers.multiple_empty () [pos]
                     else
-                      (true, fail, tags)
-                | Fail ->
-                    if fail then
-                      Gripers.multiple_fail () [pos]
-                    else
-                      (empty, true, tags)
+                      (true, tags)
                 | Receive { tag; _ } ->
                     if List.mem tag tags then
                       Gripers.multiple_receive tag [pos]
                     else
-                      (empty, fail, tag :: tags)
-            ) (false, false, []) gs in
+                      (empty, tag :: tags)
+            ) (false, []) gs in
+          (* *)
+          let ((fst_env, fst_pat, fst_constrs), rest) =
+            match gs with
+                | [] -> Gripers.empty_guard gpos
+                | (fst :: rest) ->
+                    (check_guard ienv decl_env iname guard_pat fst ty, rest)
+          in
 
-          (* Typecheck each non-fail guard, and infer an environment. *)
+          (* Typecheck each guard and infer an environment. *)
           (* Check types are the same, and calculate the environment merge,
              pattern, and final constraint set. *)
           List.fold_left (fun (env, pat, acc_constrs) g ->
@@ -773,18 +779,18 @@ and check_guards :
               check_guard ienv decl_env iname guard_pat g ty
             in
             (* Calculate environment intersection *)
-            let (env, env_constrs) = Nullable_env.intersect g_env env (WithIrMetadata.pos g) in
+            let (env, env_constrs) = Ty_env.intersect g_env env (WithIrMetadata.pos g) in
             let constrs =
               Constraint_set.union_many
                 [g_constrs; env_constrs; acc_constrs] in
             (env, Pattern.Plus (pat, g_pat), constrs) )
-          (Nullable_env.null, Pattern.Zero, Constraint_set.empty) gs
+          (fst_env, fst_pat, fst_constrs) rest
 
 (* Checks the type for a single guard, returning type, environment, pattern,
    and constraint set. *)
 and check_guard :
     IEnv.t -> Ty_env.t -> interface_name -> Type.Pattern.t -> Ir.guard -> Type.t ->
-        Nullable_env.t * Type.Pattern.t * Constraint_set.t =
+        Ty_env.t * Type.Pattern.t * Constraint_set.t =
         fun ienv decl_env iname pat g ty ->
           let open Ir in
           let open Type in
@@ -856,7 +862,7 @@ and check_guard :
                 (* Final calculated pattern is the message concatenated with the
                    calculated resulting pattern. *)
                 let res_pat =  Pattern.(Concat (Message tag, deriv)) in
-                (Nullable_env.of_env env, res_pat, constrs)
+                (env, res_pat, constrs)
             | Empty (mailbox_binder, e) ->
                 let (env, constrs) = check_comp ienv decl_env e ty in
                 let mb_ty =
@@ -880,14 +886,10 @@ and check_guard :
                                 [pos]
                 in
                 let env =
-                    env
-                    |> Ty_env.delete_binder mailbox_binder
-                    |> Nullable_env.of_env
+                    Ty_env.delete_binder mailbox_binder env
                 in
                 (env, One,
                     Constraint_set.union mb_empty_constr constrs)
-            | Fail ->
-                (Nullable_env.null, Zero, Constraint_set.empty)
 
 (* Declarations have a top-level annotation, so it only makes sense to check them. *)
 (* The result of checking each definition should be a typing environment with a

@@ -7,8 +7,8 @@ interface Test { Foo(), Bar(), Baz() }
 def foo(x: Test?): Unit {
     guard x : Foo {
         receive Foo() from x -> free(x)
-        receive Bar() from x -> (fail(x): Unit)
-        receive Baz() from x -> (fail(x): Unit)
+        receive Bar() from x -> fail(x)
+        receive Baz() from x -> fail(x)
     }
 }
 

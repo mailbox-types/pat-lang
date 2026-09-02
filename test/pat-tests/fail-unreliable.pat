@@ -4,7 +4,7 @@
 interface Test { Foo() }
 
 def unreachable(x: Test?0): Unit {
-    (fail(x): Unit)
+    fail(x)
 }
 
 def main(): Unit { () }

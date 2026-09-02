@@ -4,7 +4,7 @@
 interface Test { Foo() }
 
 def bad(x: Test?1): Unit {
-    (fail(x): Unit)
+    fail(x)
 }
 
 def main(): Unit { () }

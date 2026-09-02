@@ -6,7 +6,12 @@ interface Test { Foo(), Bar() }
 def foo(x: Test?): Unit {
     guard x : Foo {
         receive Foo() from x -> free(x)
-        receive Bar() from x -> print(intToString((fail(x): Int)))
+        # Note: Intuitively this should TC without an annotation.
+        # However at present because of let-insertion during IR conversion
+        # we end up needing to first let-bind the fail... 
+        # Would be good to investigate this more in future and see whether we
+        # can remove this.
+        receive Bar() from x -> print(intToString((fail(x) : Int)))
     }
 }
 

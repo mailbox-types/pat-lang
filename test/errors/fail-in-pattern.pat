@@ -5,7 +5,7 @@ interface Test { Foo(), Bar() }
 
 def bad(x: Test?): Unit {
     guard x : Foo {
-        receive Foo() from x -> (fail(x): Unit)
+        receive Foo() from x -> fail(x)
     }
 }
 

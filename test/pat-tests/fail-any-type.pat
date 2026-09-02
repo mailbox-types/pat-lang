@@ -5,14 +5,14 @@ interface Test { Foo(), Bar() }
 def as_int(x: Test?): Int {
     guard x : Foo {
         receive Foo() from x -> free(x); 1
-        receive Bar() from x -> (fail(x): Int)
+        receive Bar() from x -> fail(x)
     }
 }
 
 def as_tuple(x: Test?): (Int * Int) {
     guard x : Foo {
         receive Foo() from x -> free(x); (1, 2)
-        receive Bar() from x -> (fail(x): (Int * Int))
+        receive Bar() from x -> fail(x)
     }
 }
 

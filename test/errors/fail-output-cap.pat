@@ -3,8 +3,8 @@
 
 interface Test { Foo() }
 
-def bad(x: Test!): Unit {
-    (fail(x): Unit)
+def bad(x: Test![R]): Unit {
+    fail(x)
 }
 
 def main(): Unit { () }

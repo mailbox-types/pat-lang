@@ -19,16 +19,16 @@ val from_list : (Ir.Var.t * Type.t) list -> t
 val iter : (Ir.Var.t -> Type.t -> unit) -> t -> unit
 
 (** Disjoint connection of environments (i.e., the + operator on environments) *)
-val combine : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t
+val disjoint_merge : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t
 
 (** Disjoint connection of many environments *)
-val combine_many : Interface_env.t -> t list -> Position.t -> t * Constraint_set.t
+val disjoint_merge_many : Interface_env.t -> t list -> Position.t -> t * Constraint_set.t
 
 (** Joins two sequential / concurrent environments *)
-val join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t
+val sequential_merge : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t
 
 (** Merges two branching environments (e.g., if-then-else, cases) *)
-val intersect : t -> t -> Position.t -> t * Constraint_set.t
+val branching_merge : t -> t -> Position.t -> t * Constraint_set.t
 
 (** Prints environment to standard output *)
 val dump : t -> unit

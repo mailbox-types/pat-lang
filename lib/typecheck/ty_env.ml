@@ -37,12 +37,11 @@ let dump env =
                 Type.pp ty))
 
 
-(* Joins two sequential or concurrent environments (i.e., where *both*
-   actions will happen). *)
-let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
+(* Merges two environments sequentially (i.e., where *both* actions will happen). *)
+let sequential_merge : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
     fun ienv env1 env2 pos ->
 
-        let join_mailbox_types var mb1 mb2 =
+        let merge_mailbox_types var mb1 mb2 =
             let open Type in
             let open Capability in
             match mb1, mb2 with
@@ -62,7 +61,7 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                         ((In, pat), constrs)
         in
 
-        let rec join_types (var: Ir.Var.t) (t1: Type.t) (t2: Type.t) : (Type.t * Constraint_set.t) =
+        let rec merge_types (var: Ir.Var.t) (t1: Type.t) (t2: Type.t) : (Type.t * Constraint_set.t) =
             let open Type in
             match (t1, t2) with
                 | Base b1, Base b2 when b1 = b2 ->
@@ -82,8 +81,8 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                     pat1; quasilinearity = ql1 },
                   Mailbox { capability = cap2; interface = iface2; pattern =
                       pat2; quasilinearity = ql2 } ->
-                      (* We can only join variables with the same interface
-                         name. If these match, we can join the types. *)
+                      (* We can only merge variables with the same interface
+                         name. *)
                       if iface1 <> iface2 then
                           Gripers.env_interface_mismatch true
                             t1 t2 var iface1 iface2 [pos]
@@ -100,7 +99,7 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                                     Gripers.invalid_ql_sequencing var [pos]
                           in
                           let ((cap, pat), constrs) =
-                              join_mailbox_types var
+                              merge_mailbox_types var
                                 (cap1, pat1) (cap2, pat2) in
                           Mailbox {
                               capability = cap;
@@ -111,7 +110,7 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 ->
-                            let t, t_constrs = join_types var t1 t2 in
+                            let t, t_constrs = merge_types var t1 t2 in
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
@@ -119,7 +118,7 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                 | Rec (s1, ts1), Rec (s2, ts2) when s1 = s2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 ->
-                            let t, t_constrs = join_types var t1 t2 in
+                            let t, t_constrs = merge_types var t1 t2 in
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
@@ -141,19 +140,19 @@ let join : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
         let (joined, constrs) =
             List.fold_left (fun (joined, constrs) (name, ty1) ->
                 let ty2 = List.assoc name isect2 in
-                let (ty, join_constrs) = join_types name ty1 ty2 in
+                let (ty, join_constrs) = merge_types name ty1 ty2 in
                 ((name, ty) :: joined, Constraint_set.union join_constrs constrs)
             ) ([], Constraint_set.empty) isect1 in
         from_list (joined @ disjoint1 @ disjoint2), constrs
 
 (* Combines two environments. The environments should only intersect
    on unrestricted types. *)
-let combine : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
+let disjoint_merge : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
     fun ienv env1 env2 pos ->
-        let combine_really ienv env1 env2 pos =
+        let disjoint_merge_really ienv env1 env2 pos =
             (* Types must be *the same* and *unrestricted* *)
             (* Subtype in both directions *)
-            let join_types var (ty1: Type.t) (ty2: Type.t) =
+            let merge_types var (ty1: Type.t) (ty2: Type.t) =
                 (* The subtyping and constraints are enough to rule out
                    re-use of mailboxes, but it's worth special-casing to
                    get a better error message. *)
@@ -178,7 +177,7 @@ let combine : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
                 |> List.filter_map (fun (k, ty1) ->
                         match lookup_opt k env2 with
                             | None -> None
-                            | Some ty2 -> Some (join_types k ty1 ty2)
+                            | Some ty2 -> Some (merge_types k ty1 ty2)
 
                 )
                 |> Constraint_set.union_many
@@ -189,24 +188,24 @@ let combine : Interface_env.t -> t -> t -> Position.t -> t * Constraint_set.t =
             (combined_env, overlap_constrs)
         in
         let fn =
-            if Settings.(get join_not_combine) then join else combine_really
+            if Settings.(get join_not_combine) then sequential_merge else disjoint_merge_really
         in
         fn ienv env1 env2 pos
 
 
-let combine_many ienv envs pos =
+let disjoint_merge_many ienv envs pos =
     List.fold_right (fun x (env_acc, constrs_acc) ->
-        let (env, constrs) = combine ienv x env_acc pos in
+        let (env, constrs) = disjoint_merge ienv x env_acc pos in
         env, Constraint_set.union constrs constrs_acc) envs (empty, Constraint_set.empty)
 
 (* Merges environments resulting from branching control flow. *)
 (* Core idea is that linear types must be used in precisely the same way in
     each branch. Unrestricted types must be used at the same type, but need
     not be present in each branch (and will appear in the output environment.) *)
-let intersect : t -> t -> Position.t -> t * Constraint_set.t =
+let branching_merge : t -> t -> Position.t -> t * Constraint_set.t =
     fun env1 env2 pos ->
         let open Type in
-        let intersect_mailbox_types var mb1 mb2 =
+        let branching_merge_mailbox_types var mb1 mb2 =
             let open Capability in
             match mb1, mb2 with
                 | (Out, pat1), (Out, pat2) ->
@@ -224,7 +223,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                 | _, _ ->
                     Gripers.inconsistent_branch_capabilities var [pos]
         in
-        let rec intersect_types var (t1: Type.t) (t2: Type.t) : (Type.t * Constraint_set.t) =
+        let rec branching_merge_types var (t1: Type.t) (t2: Type.t) : (Type.t * Constraint_set.t) =
             match t1, t2 with
                 | Base b1, Base b2 when b1 = b2 ->
                     (Base b1, Constraint_set.empty)
@@ -243,7 +242,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                             false t1 t2 var iface1 iface2 [pos]
                       else
                           let ((cap, pat), constrs) =
-                              intersect_mailbox_types var
+                              branching_merge_mailbox_types var
                                 (cap1, pat1) (cap2, pat2) in
                           Mailbox {
                               capability = cap;
@@ -255,7 +254,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                 | Tuple ts1, Tuple ts2 ->
                     let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 -> 
-                            let t, t_constrs = intersect_types var t1 t2 in
+                            let t, t_constrs = branching_merge_types var t1 t2 in
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
@@ -264,7 +263,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
                     if s1 <> s2 then Gripers.type_mismatch false t1 t2 var [pos]
                     else let (ts, constrs) =
                         List.fold_left2 (fun (acc, constrs) t1 t2 ->
-                            let t, t_constrs = intersect_types var t1 t2 in
+                            let t, t_constrs = branching_merge_types var t1 t2 in
                             t :: acc, Constraint_set.union t_constrs constrs)
                         ([], Constraint_set.empty) ts1 ts2
                     in
@@ -275,7 +274,7 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
 
         (* As in the join case, calculate intersection of the two typing
            environments, and join each type. *)
-        let intersect_envs (env1: Type.t VarMap.t) (env2: Type.t VarMap.t) =
+        let branching_merge_envs (env1: Type.t VarMap.t) (env2: Type.t VarMap.t) =
             let bindings1 = VarMap.bindings env1 in
             let bindings2 = VarMap.bindings env2 in
 
@@ -321,18 +320,18 @@ let intersect : t -> t -> Position.t -> t * Constraint_set.t =
               in
               disjoint_sends @ disjoint_others
             in
-            (* Then, calculate intersection of the types appearing in both
+            (* Then, calculate branching merge of the types appearing in both
                environments *)
             let (merged, constrs) =
                 List.fold_left (fun (acc, constrs) (name, ty1) ->
                     let ty2 = List.assoc name isect2 in
-                    let (ty, isect_constrs) = intersect_types name ty1 ty2 in
+                    let (ty, isect_constrs) = branching_merge_types name ty1 ty2 in
                     ((name, ty) :: acc, Constraint_set.union isect_constrs constrs)
                 ) ([], Constraint_set.empty) isect1
             in
             from_list (merged @ disjoints), constrs
         in
-        intersect_envs env1 env2
+        branching_merge_envs env1 env2
 
 let make_usable =
     VarMap.map Type.make_usable

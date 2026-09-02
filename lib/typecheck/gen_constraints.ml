@@ -43,7 +43,7 @@ let rec synthesise_val :
             let tys_envs_constrss = List.map (synthesise_val ienv decl_env) vs in
             let tys, envs, constrss = split3 tys_envs_constrss in
             let constrs = Constraint_set.union_many constrss in
-            let env, constrs2 = Ty_env.combine_many ienv envs pos in
+            let env, constrs2 = Ty_env.disjoint_merge_many ienv envs pos in
             (* Ensure any synthesised types are returnable *)
             let () =
                 if not <| Settings.(get liberal_datatypes) then
@@ -203,7 +203,7 @@ and check_val :
                     let envs = List.map fst envs_and_constrs in
                     let constrs = List.map snd envs_and_constrs in
                     let env, combine_constrs =
-                        Ty_env.combine_many ienv envs pos
+                        Ty_env.disjoint_merge_many ienv envs pos
                     in
                     env, Constraint_set.union_many (combine_constrs :: constrs)
                 | _ -> Gripers.expected_recursive_type ty [pos]
@@ -228,7 +228,7 @@ and check_val :
                 |> List.split
             in
             let check_constrs = Constraint_set.union_many check_constrss in
-            let (env, combine_constrs) = Ty_env.combine_many ienv check_envs pos in
+            let (env, combine_constrs) = Ty_env.disjoint_merge_many ienv check_envs pos in
             env, Constraint_set.union check_constrs combine_constrs
         | _ ->
             let synth_ty, synth_env, synth_constrs =
@@ -287,7 +287,7 @@ and synthesise_comp :
                 List.fold_right (fun (x, ty) (acc_env, acc_constrs) ->
                     let (arg_env, arg_constrs) = check_val ienv decl_env x ty in
                     (* Note: arguments must have disjoint type environments *)
-                    let (env, env_constrs) = Ty_env.combine ienv arg_env acc_env pos in
+                    let (env, env_constrs) = Ty_env.disjoint_merge ienv arg_env acc_env pos in
                     let constrs =
                         Constraint_set.union_many
                             [arg_constrs; env_constrs; acc_constrs]
@@ -298,7 +298,7 @@ and synthesise_comp :
             (* No nested evaluation contexts, so we combine function and
                argument environments, expecting disjointness. *)
             let (env, env_constrs) =
-                Ty_env.combine ienv fun_env arg_env pos
+                Ty_env.disjoint_merge ienv fun_env arg_env pos
             in
             (* Union constraint sets *)
             let constrs =
@@ -336,12 +336,12 @@ and synthesise_comp :
                 List.combine payloads payload_types
                 |> List.fold_left (fun (env, constrs) (payload, iface_ty)  ->
                     let (chk_env, chk_constrs) = check_val ienv decl_env payload iface_ty in
-                    let (env, env_constrs) = Ty_env.combine ienv env chk_env pos in
+                    let (env, env_constrs) = Ty_env.disjoint_merge ienv env chk_env pos in
                     (env, Constraint_set.union_many
                         [constrs; chk_constrs; env_constrs])
                 ) (Ty_env.empty, Constraint_set.empty)
             in
-            let (env, env_constrs) = Ty_env.combine ienv mb_env arg_env pos in
+            let (env, env_constrs) = Ty_env.disjoint_merge ienv mb_env arg_env pos in
             let constrs =
                 Constraint_set.union_many
                 [ mb_constrs; arg_constrs; env_constrs ] in
@@ -363,7 +363,7 @@ and synthesise_comp :
                         in
                         (* Join environments, union constraints *)
                         let (env, env_constrs) =
-                            Ty_env.join ienv term_env body_env pos
+                            Ty_env.sequential_merge ienv term_env body_env pos
                         in
                         let constrs =
                             Constraint_set.union_many
@@ -385,7 +385,7 @@ and synthesise_comp :
                                 binder_var binder_ty [pos]
                         in
                         let (env, env_constrs) =
-                            Ty_env.join ienv binder_env body_env pos
+                            Ty_env.sequential_merge ienv binder_env body_env pos
                         in
                         let constrs =
                             Constraint_set.union_many
@@ -398,7 +398,7 @@ and synthesise_comp :
             (* Check e1 has type unit, synthesise body type *)
             let (e1_env, e1_constrs) = check_comp ienv decl_env e1 Type.unit_type in
             let (e2_type, e2_env, e2_constrs) = synth e2 in
-            let (env, env_constrs) = Ty_env.join ienv e1_env e2_env pos in
+            let (env, env_constrs) = Ty_env.sequential_merge ienv e1_env e2_env pos in
             let constrs =
                 Constraint_set.union_many
                     [ e1_constrs; e2_constrs; env_constrs ] in
@@ -482,13 +482,13 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                 | [] -> (Ty_env.empty, Constraint_set.empty)
                 | (env0, _) :: rest ->
                     List.fold_left (fun (acc_env, acc_constrs) (env_i, _) ->
-                        let (new_env, new_constrs) = Ty_env.intersect acc_env env_i pos in
+                        let (new_env, new_constrs) = Ty_env.branching_merge acc_env env_i pos in
                         (new_env, Constraint_set.union acc_constrs new_constrs)
                     ) (env0, Constraint_set.empty) rest
             in
             (* Finally combine the term env with the intersected env *)
             let env, combine_constrs =
-                Ty_env.combine ienv term_env isect_env pos
+                Ty_env.disjoint_merge ienv term_env isect_env pos
             in
             let all_branch_constrs =
                 Constraint_set.union_many
@@ -503,7 +503,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
             (* Check e1 has type unit, check body type *)
             let (e1_env, e1_constrs) = chk e1 Type.unit_type in
             let (e2_env, e2_constrs) = chk e2 ty in
-            let (env, env_constrs) = Ty_env.join ienv e1_env e2_env pos in
+            let (env, env_constrs) = Ty_env.sequential_merge ienv e1_env e2_env pos in
             let constrs =
                 Constraint_set.union_many
                     [ e1_constrs; e2_constrs; env_constrs ] in
@@ -513,12 +513,12 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
             let (test_env, test_constrs) = chkv test Type.bool_type in
             let (then_env, then_constrs) = chk then_expr ty in
             let (else_env, else_constrs) = chk else_expr ty in
-            let (branches_env, env1_constrs) = Ty_env.intersect then_env else_env pos in
+            let (branches_env, env1_constrs) = Ty_env.branching_merge then_env else_env pos in
             (* Doesn't actually matter whether this is 'join' or 'combine',
                since there's no typable value with type 'bool' which will
                involve sending along a mailbox type. Using 'combine' for
                uniformity. *)
-            let (env, env2_constrs) = Ty_env.combine ienv test_env branches_env pos in
+            let (env, env2_constrs) = Ty_env.disjoint_merge ienv test_env branches_env pos in
             let constrs =
                 Constraint_set.union_many
                     [ test_constrs; then_constrs;
@@ -550,7 +550,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                         in
                         (* Join environments, union constraints *)
                         let (env, env_constrs) =
-                            Ty_env.join ienv term_env body_env pos
+                            Ty_env.sequential_merge ienv term_env body_env pos
                         in
                         let constrs =
                             Constraint_set.union_many
@@ -568,7 +568,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                         in
                         let unr_constrs = Type_utils.make_unrestricted binder_ty pos in
                         let (env, env_constrs) =
-                            Ty_env.join ienv binder_env body_env pos
+                            Ty_env.sequential_merge ienv binder_env body_env pos
                         in
                         let constrs =
                             Constraint_set.union_many
@@ -624,7 +624,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                     let body_env_no_binders = Ty_env.delete_many bnd_vars body_env in
                     (* Combine environments, union constraints *)
                     let (env, env_constrs) =
-                        Ty_env.combine ienv term_env body_env_no_binders pos
+                        Ty_env.disjoint_merge ienv term_env body_env_no_binders pos
                     in
                     (* Do continuation aliasing check if any component is non-returnable
                        (e.g. if we are using liberal DTs) *)
@@ -668,7 +668,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                     in
                     let body_env_no_binders = Ty_env.delete_many bnd_vars body_env in
                     let (env, env_constrs) =
-                        Ty_env.combine ienv tuple_env body_env_no_binders pos
+                        Ty_env.disjoint_merge ienv tuple_env body_env_no_binders pos
                     in
                     (* Do continuation aliasing check if any component is non-returnable
                        (e.g. if we are using liberal DTs) *)
@@ -706,7 +706,7 @@ and check_comp : IEnv.t -> Ty_env.t -> Ir.comp -> Type.t -> Ty_env.t * Constrain
                 chkv target (Type.make_returnable target_ty)
             in
             let (env, env_constrs) =
-                Ty_env.combine ienv target_env guards_env pos
+                Ty_env.disjoint_merge ienv target_env guards_env pos
             in
             (* The pattern annotation must be *included* in the inferred pattern.
                The reason this is inclusion rather than equivalence is that we
@@ -783,7 +783,7 @@ and check_guards :
               check_guard ienv decl_env iname guard_pat g ty
             in
             (* Calculate environment intersection *)
-            let (env, env_constrs) = Ty_env.intersect g_env env (WithIrMetadata.pos g) in
+            let (env, env_constrs) = Ty_env.branching_merge g_env env (WithIrMetadata.pos g) in
             let constrs =
               Constraint_set.union_many
                 [g_constrs; env_constrs; acc_constrs] in
@@ -991,7 +991,7 @@ let synthesise_program { prog_interfaces; prog_decls; prog_body } =
     match prog_body with
         | Some body ->
             let ty, body_env, body_constrs = synthesise_comp ienv decl_env body in
-            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithIrMetadata.pos body) in
+            let env, env_constrs = Ty_env.disjoint_merge ienv decl_env body_env (WithIrMetadata.pos body) in
             let constrs =
                 Constraint_set.union_many
                     [decl_constrs; body_constrs; env_constrs]
@@ -1014,7 +1014,7 @@ let check_program { prog_interfaces; prog_decls; prog_body } ty =
     match prog_body with
         | Some body ->
             let body_env, body_constrs = check_comp ienv decl_env body ty in
-            let env, env_constrs = Ty_env.combine ienv decl_env body_env (WithIrMetadata.pos body) in
+            let env, env_constrs = Ty_env.disjoint_merge ienv decl_env body_env (WithIrMetadata.pos body) in
             let constrs =
                 Constraint_set.union_many
                     [decl_constrs; body_constrs; env_constrs]

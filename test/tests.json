@@ -191,6 +191,14 @@
                     "args": [
                         "--typecheck-only"
                     ]
+                },
+                {
+                    "name": "Type combination in pairs",
+                    "filename": "pat-tests/pair-comb.pat",
+                    "exit_code": 0,
+                    "args": [
+                        "--typecheck-only"
+                    ]
                 }
             ]
         },
